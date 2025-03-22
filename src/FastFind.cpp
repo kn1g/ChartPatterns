@@ -2,7 +2,7 @@
 #include <string>
 #include <cmath>
 #include "cppHeader.hpp"
-#include <Eigen/Dense>
+#include <RcppEigen.h>
 
 /**
  * @file FastFind.cpp
