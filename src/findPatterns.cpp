@@ -57,6 +57,9 @@ class ISHSDetector;
 Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
                         NumericVector Original_times,
                         NumericVector Original_prices) {
+    Rcpp::Rcout << "[DEBUG] Starting findPatterns with " << Original_prices.size() 
+                << " prices, " << Original_times.size() << " times, and " 
+                << PrePro_indexFilter.size() << " pivot points" << std::endl;
     
     // ---- Input validation ----
     
@@ -149,6 +152,8 @@ Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
     relReturns2.reserve(maxPossiblePatterns);
     relReturns4.reserve(maxPossiblePatterns);
     
+    Rcpp::Rcout << "[DEBUG] Memory reserved for up to " << maxPossiblePatterns << " patterns" << std::endl;
+    
     // ---- Pattern detector initialization ----
     
     // OPTIMIZATION: Use smart pointers for automatic memory management
@@ -156,6 +161,11 @@ Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
     detectors.reserve(2); // We know exactly how many detectors we'll add
     detectors.push_back(std::make_unique<SHSDetector>());
     detectors.push_back(std::make_unique<ISHSDetector>());
+    
+    Rcpp::Rcout << "[DEBUG] Detector initialization complete. Created " 
+                << detectors.size() << " detectors (SHS, iSHS)" << std::endl;
+    Rcpp::Rcout << "[DEBUG] Starting main detection loop with " 
+                << QuerySeries_prices.size() - 6 << " positions to check" << std::endl;
     
     // -----------------------------------------------------------------
     // ---- Main pattern detection loop ----
@@ -170,183 +180,212 @@ Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
     // core functionality without needing to know about the output format requirements.
     //
     for (size_t i = 0; i < (QuerySeries_prices.size() - 6); ++i) {
+        if (i % 100 == 0 || i == 0) {
+            Rcpp::Rcout << "[DEBUG] Processing position " << i << " / " 
+                       << (QuerySeries_prices.size() - 6) << std::endl;
+        }
         
         // For each detector, check if a pattern is detected at position i
         for (const auto& detector : detectors) {
             PatternData pattern;
-          if (detector->detect(QuerySeries_prices, QuerySeries_times, i, pattern)) {
-            
-            // OPTIMIZATION: Safety check against theoretical maximum to prevent memory issues
-            if (patternNames.size() >= static_cast<size_t>(maxPossiblePatterns)) {
-              Rcpp::stop("Maximum pattern count exceeded. Found more patterns than theoretically expected based on data size. Please report this issue.");
-            }
-            
-            // Pattern is detected, now search for breakout
-            bool foundBreakout = false;
-                
-                // OPTIMIZATION: Start breakout search after right shoulder
-                // This avoids unnecessary checks before the pattern is complete
-                for (int j = PrePro_indexFilter[i+5]; j < Original_times.size() - 1; ++j) {
+            try {
+                bool detected = detector->detect(QuerySeries_prices, QuerySeries_times, i, pattern);
+                if (detected) {
+                    Rcpp::Rcout << "[DEBUG] Pattern '" << pattern.patternName << "' detected at position " << i << std::endl;
                     
-                    // OPTIMIZATION: Early rejection if pattern has been invalidated
-                    // Use the detector's implementation to determine if pattern is still valid
-                    if (detector->isPatternInvalidated(Original_prices, Original_times, j, pattern)) {
-                        break;  // Pattern is no longer valid, stop checking for breakout
+                    // OPTIMIZATION: Safety check against theoretical maximum to prevent memory issues
+                    if (patternNames.size() >= static_cast<size_t>(maxPossiblePatterns)) {
+                        Rcpp::stop("Maximum pattern count exceeded. Found more patterns than theoretically expected based on data size. Please report this issue.");
                     }
                     
-                    // Check for breakout using the appropriate detector
-                    if (detector->detectBreakout(Original_prices, Original_times, j, pattern)) {
-                        // Breakout found - mark pattern as valid and store breakout index
-                        // Adjusting to R's 1-based indexing for return values
-                        foundBreakout = true;
-                        pattern.breakoutIdx = j + 1; // +1 for R indexing
+                    // Pattern is detected, now search for breakout
+                    bool foundBreakout = false;
+                    
+                    Rcpp::Rcout << "[DEBUG] Searching for breakout starting at index " << PrePro_indexFilter[i+5] << std::endl;
+                    
+                    // OPTIMIZATION: Start breakout search after right shoulder
+                    // This avoids unnecessary checks before the pattern is complete
+                    for (int j = PrePro_indexFilter[i+5]; j < Original_times.size() - 1; ++j) {
                         
-                        // --- Analyze trend context around the pattern ---
-                        // Declare variables to hold trend information before/after pattern
-                        double trendBeginPrice, trendEndPrice;
-                        int trendBeginTime, trendEndTime;
+                        // OPTIMIZATION: Early rejection if pattern has been invalidated
+                        // Use the detector's implementation to determine if pattern is still valid
+                        if (detector->isPatternInvalidated(Original_prices, Original_times, j, pattern)) {
+                            break;  // Pattern is no longer valid, stop checking for breakout
+                        }
                         
-                        // Call detector's calculateTrend method to identify trend context
-                        // This analyzes price movements before and after the pattern
-                        detector->calculateTrend(QuerySeries_prices, QuerySeries_times, 
-                                               pattern, j, 
-                                               trendBeginPrice, trendBeginTime, 
-                                               trendEndPrice, trendEndTime);
-                        
-                        // Store the trend information in the pattern object for later analysis
-                        pattern.trendBeginPrice = trendBeginPrice;
-                        pattern.trendBeginTime = trendBeginTime;
-                        pattern.trendEndPrice = trendEndPrice;
-                        pattern.trendEndTime = trendEndTime;
-                        
-                        // --- Process pattern returns (performance metrics) ---
-                        // Initialize return value containers with NA (missing value)
-                        // Fixed window returns (for 1,3,5,10,30,60 periods after breakout)
-                        std::vector<double> returnValues(6, NA_REAL);
-                        // Relative window returns (for 1/3, 1/2, 1, 2, 4 times pattern length)
-                        std::vector<double> relReturnValues(5, NA_REAL);
-                        
-                        // Call detector's calculateReturns method to compute actual returns
-                        // This calculates how price performs after the pattern breakout
-                        detector->calculateReturns(Original_prices, Original_times,
-                                                 j+1, // Breakout index (R-indexed)
-                                                 pattern.startIdx, // Pattern start index
-                                                 returnValues, // Output for fixed window returns 
-                                                 relReturnValues); // Output for relative window returns
-                        
-                        // Store the calculated returns in the pattern object
-                        pattern.returns = returnValues;
-                        pattern.relReturns = relReturnValues;
-                        
-                        // --- Record breakout point details ---
-                        // The vectors were already sized to hold 7 elements during pattern detection
-                        // (6 pattern points + 1 breakout point)
-                        
-                        // Store the actual breakout timestamp and price as the 7th point (index 6)
-                        pattern.timeStamps[6] = Original_times[j+1];
-                        pattern.priceStamps[6] = Original_prices[j+1];
-                        
-                        // Exit the breakout search loop since we found a valid breakout
-                        break;
+                        // Check for breakout using the appropriate detector
+                        try {
+                            if (detector->detectBreakout(Original_prices, Original_times, j, pattern)) {
+                                // Breakout found - mark pattern as valid and store breakout index
+                                // Adjusting to R's 1-based indexing for return values
+                                foundBreakout = true;
+                                pattern.breakoutIdx = j + 1; // +1 for R indexing
+                                Rcpp::Rcout << "[DEBUG] Breakout found at index " << j + 1 << " (R-indexed)" << std::endl;
+                                
+                                // --- Analyze trend context around the pattern ---
+                                // Declare variables to hold trend information before/after pattern
+                                double trendBeginPrice, trendEndPrice;
+                                int trendBeginTime, trendEndTime;
+                                
+                                Rcpp::Rcout << "[DEBUG] Calculating trend context for pattern" << std::endl;
+                                try {
+                                    // Call detector's calculateTrend method to identify trend context
+                                    // This analyzes price movements before and after the pattern
+                                    detector->calculateTrend(QuerySeries_prices, QuerySeries_times, 
+                                                          pattern, j, 
+                                                          trendBeginPrice, trendBeginTime, 
+                                                          trendEndPrice, trendEndTime);
+                                    Rcpp::Rcout << "[DEBUG] Trend calculation complete" << std::endl;
+                                } catch (const std::exception& e) {
+                                    Rcpp::Rcout << "[DEBUG] Exception in trend calculation: " << e.what() << std::endl;
+                                }
+                                
+                                // Store the trend information in the pattern object for later analysis
+                                pattern.trendBeginPrice = trendBeginPrice;
+                                pattern.trendBeginTime = trendBeginTime;
+                                pattern.trendEndPrice = trendEndPrice;
+                                pattern.trendEndTime = trendEndTime;
+                                
+                                // --- Process pattern returns (performance metrics) ---
+                                // Initialize return value containers with NA (missing value)
+                                // Fixed window returns (for 1,3,5,10,30,60 periods after breakout)
+                                std::vector<double> returnValues(6, NA_REAL);
+                                // Relative window returns (for 1/3, 1/2, 1, 2, 4 times pattern length)
+                                std::vector<double> relReturnValues(5, NA_REAL);
+                                
+                                Rcpp::Rcout << "[DEBUG] Calculating returns for pattern" << std::endl;
+                                try {
+                                    // Call detector's calculateReturns method to compute actual returns
+                                    // This calculates how price performs after the pattern breakout
+                                    detector->calculateReturns(Original_prices, Original_times,
+                                                            j+1, // Breakout index (R-indexed)
+                                                            pattern.startIdx, // Pattern start index
+                                                            returnValues, // Output for fixed window returns 
+                                                            relReturnValues); // Output for relative window returns
+                                    Rcpp::Rcout << "[DEBUG] Returns calculation complete" << std::endl;
+                                } catch (const std::exception& e) {
+                                    Rcpp::Rcout << "[DEBUG] Exception in returns calculation: " << e.what() << std::endl;
+                                }
+                                
+                                // Store the calculated returns in the pattern object
+                                pattern.returns = returnValues;
+                                pattern.relReturns = relReturnValues;
+                                
+                                // --- Record breakout point details ---
+                                // The vectors were already sized to hold 7 elements during pattern detection
+                                // (6 pattern points + 1 breakout point)
+                                
+                                // Store the actual breakout timestamp and price as the 7th point (index 6)
+                                pattern.timeStamps[6] = Original_times[j+1];
+                                pattern.priceStamps[6] = Original_prices[j+1];
+                                
+                                // Exit the breakout search loop since we found a valid breakout
+                                break;
+                            }
+                        } catch (const std::exception& e) {
+                            Rcpp::Rcout << "[DEBUG] Exception in breakout detection: " << e.what() << std::endl;
+                        }
                     }
+                    
+                    // --- Populate output vectors with pattern details ---
+                    // Directly store pattern data in output vectors without the redundant patterns vector
+                    // These vectors will be used to create the R data frames for return values
+                    
+                    // Store pattern identification information
+                    patternNames.push_back(pattern.patternName);  // Type of pattern ("SHS" or "iSHS")
+                    validPatterns.push_back(foundBreakout);       // Whether a breakout was found
+                    
+                    // Store pattern position information (adding 1 for R's 1-based indexing)
+                    firstIndexPrePro.push_back(pattern.startIdx + 1);  // Index in pivot point series
+                    firstIndexOriginal.push_back(PrePro_indexFilter[pattern.startIdx] + 1);  // Index in original series
+                    breakoutIndices.push_back(pattern.breakoutIdx);    // Breakout index (already R-indexed)
+                    
+                    // --- Store timestamps for each key point in the pattern ---
+                    // For SHS: 0=First point, 1=Left shoulder, 2=Trough1, 3=Head, 4=Trough2, 5=Right shoulder
+                    // For iSHS: 0=First point, 1=Left shoulder, 2=Peak1, 3=Head, 4=Peak2, 5=Right shoulder
+                    timeStamp0.push_back(pattern.timeStamps[0]);  // First point timestamp
+                    timeStamp1.push_back(pattern.timeStamps[1]);  // Left shoulder timestamp
+                    timeStamp2.push_back(pattern.timeStamps[2]);  // First peak/trough timestamp
+                    timeStamp3.push_back(pattern.timeStamps[3]);  // Head timestamp
+                    timeStamp4.push_back(pattern.timeStamps[4]);  // Second peak/trough timestamp
+                    timeStamp5.push_back(pattern.timeStamps[5]);  // Right shoulder timestamp
+                    
+                    // --- Store prices for each key point in the pattern ---
+                    // These price values correspond to the timestamps above
+                    priceStamp0.push_back(pattern.priceStamps[0]);  // First point price
+                    priceStamp1.push_back(pattern.priceStamps[1]);  // Left shoulder price
+                    priceStamp2.push_back(pattern.priceStamps[2]);  // First peak/trough price
+                    priceStamp3.push_back(pattern.priceStamps[3]);  // Head price
+                    priceStamp4.push_back(pattern.priceStamps[4]);  // Second peak/trough price
+                    priceStamp5.push_back(pattern.priceStamps[5]);  // Right shoulder price
+                    
+                    // --- Store surrounding trend information ---
+                    // These values capture the trend context before and after the pattern
+                    trendBeginPrices.push_back(pattern.trendBeginPrice);  // Price at start of preceding trend
+                    trendBeginTimes.push_back(pattern.trendBeginTime);    // Time at start of preceding trend
+                    trendEndPrices.push_back(pattern.trendEndPrice);      // Price at end of following trend
+                    trendEndTimes.push_back(pattern.trendEndTime);        // Time at end of following trend
+                    
+                    // --- Handle breakout-dependent data storage ---
+                    if (foundBreakout) {
+                        // --- Store breakout point details ---
+                        // If a valid breakout was found, store the actual timestamp and price at breakout
+                        timeStampBreakout.push_back(pattern.timeStamps[6]);   // Breakout timestamp (7th point)
+                        priceStampBreakout.push_back(pattern.priceStamps[6]); // Breakout price (7th point)
+                        
+                        // --- Store fixed-window return values ---
+                        // Returns at specific periods after breakout (1,3,5,10,30,60)
+                        returns1.push_back(pattern.returns[0]);   // Return after 1 period
+                        returns3.push_back(pattern.returns[1]);   // Return after 3 periods
+                        returns5.push_back(pattern.returns[2]);   // Return after 5 periods
+                        returns10.push_back(pattern.returns[3]);  // Return after 10 periods
+                        returns30.push_back(pattern.returns[4]);  // Return after 30 periods
+                        returns60.push_back(pattern.returns[5]);  // Return after 60 periods
+                        
+                        // --- Store relative-window return values ---
+                        // Returns at specific multiples of pattern length
+                        relReturns13.push_back(pattern.relReturns[0]);  // Return after 1/3 of pattern length
+                        relReturns12.push_back(pattern.relReturns[1]);  // Return after 1/2 of pattern length
+                        relReturns1.push_back(pattern.relReturns[2]);   // Return after 1x pattern length
+                        relReturns2.push_back(pattern.relReturns[3]);   // Return after 2x pattern length
+                        relReturns4.push_back(pattern.relReturns[4]);   // Return after 4x pattern length
+                    } else {
+                        // --- Handle patterns without breakout ---
+                        // For patterns without a breakout, we still need to maintain consistent
+                        // vector sizes by adding NA values as placeholders
+                        
+                        // Add NA for breakout data
+                        timeStampBreakout.push_back(NA_INTEGER);  // No breakout timestamp (missing value)
+                        priceStampBreakout.push_back(NA_REAL);    // No breakout price (missing value)
+                        
+                        // Add NA for all fixed-window returns
+                        returns1.push_back(NA_REAL);   // No 1-period return
+                        returns3.push_back(NA_REAL);   // No 3-period return
+                        returns5.push_back(NA_REAL);   // No 5-period return
+                        returns10.push_back(NA_REAL);  // No 10-period return
+                        returns30.push_back(NA_REAL);  // No 30-period return
+                        returns60.push_back(NA_REAL);  // No 60-period return
+                        
+                        // Add NA for all relative-window returns
+                        relReturns13.push_back(NA_REAL);  // No 1/3-length return
+                        relReturns12.push_back(NA_REAL);  // No 1/2-length return
+                        relReturns1.push_back(NA_REAL);   // No 1x-length return
+                        relReturns2.push_back(NA_REAL);   // No 2x-length return
+                        relReturns4.push_back(NA_REAL);   // No 4x-length return
+                    }
+                    
+                    // --- Advance the pattern search position ---
+                    // Skip indices that have already been analyzed as part of this pattern
+                    // Each pattern uses 6 points, so we can safely skip ahead by 5 positions
+                    // (skipping 5 moves us to position i+5, the last point of the current pattern)
+                    i = i + 5;
+                    
+                    // Exit the detector loop since we found a pattern
+                    // This prevents checking other detectors at the same position
+                    break;
                 }
-                
-                // --- Populate output vectors with pattern details ---
-                // Directly store pattern data in output vectors without the redundant patterns vector
-                // These vectors will be used to create the R data frames for return values
-                
-                // Store pattern identification information
-                patternNames.push_back(pattern.patternName);  // Type of pattern ("SHS" or "iSHS")
-                validPatterns.push_back(foundBreakout);       // Whether a breakout was found
-                
-                // Store pattern position information (adding 1 for R's 1-based indexing)
-                firstIndexPrePro.push_back(pattern.startIdx + 1);  // Index in pivot point series
-                firstIndexOriginal.push_back(PrePro_indexFilter[pattern.startIdx] + 1);  // Index in original series
-                breakoutIndices.push_back(pattern.breakoutIdx);    // Breakout index (already R-indexed)
-                
-                // --- Store timestamps for each key point in the pattern ---
-                // For SHS: 0=First point, 1=Left shoulder, 2=Trough1, 3=Head, 4=Trough2, 5=Right shoulder
-                // For iSHS: 0=First point, 1=Left shoulder, 2=Peak1, 3=Head, 4=Peak2, 5=Right shoulder
-                timeStamp0.push_back(pattern.timeStamps[0]);  // First point timestamp
-                timeStamp1.push_back(pattern.timeStamps[1]);  // Left shoulder timestamp
-                timeStamp2.push_back(pattern.timeStamps[2]);  // First peak/trough timestamp
-                timeStamp3.push_back(pattern.timeStamps[3]);  // Head timestamp
-                timeStamp4.push_back(pattern.timeStamps[4]);  // Second peak/trough timestamp
-                timeStamp5.push_back(pattern.timeStamps[5]);  // Right shoulder timestamp
-                
-                // --- Store prices for each key point in the pattern ---
-                // These price values correspond to the timestamps above
-                priceStamp0.push_back(pattern.priceStamps[0]);  // First point price
-                priceStamp1.push_back(pattern.priceStamps[1]);  // Left shoulder price
-                priceStamp2.push_back(pattern.priceStamps[2]);  // First peak/trough price
-                priceStamp3.push_back(pattern.priceStamps[3]);  // Head price
-                priceStamp4.push_back(pattern.priceStamps[4]);  // Second peak/trough price
-                priceStamp5.push_back(pattern.priceStamps[5]);  // Right shoulder price
-                
-                // --- Store surrounding trend information ---
-                // These values capture the trend context before and after the pattern
-                trendBeginPrices.push_back(pattern.trendBeginPrice);  // Price at start of preceding trend
-                trendBeginTimes.push_back(pattern.trendBeginTime);    // Time at start of preceding trend
-                trendEndPrices.push_back(pattern.trendEndPrice);      // Price at end of following trend
-                trendEndTimes.push_back(pattern.trendEndTime);        // Time at end of following trend
-                
-                // --- Handle breakout-dependent data storage ---
-                if (foundBreakout) {
-                    // --- Store breakout point details ---
-                    // If a valid breakout was found, store the actual timestamp and price at breakout
-                    timeStampBreakout.push_back(pattern.timeStamps[6]);   // Breakout timestamp (7th point)
-                    priceStampBreakout.push_back(pattern.priceStamps[6]); // Breakout price (7th point)
-                    
-                    // --- Store fixed-window return values ---
-                    // Returns at specific periods after breakout (1,3,5,10,30,60)
-                    returns1.push_back(pattern.returns[0]);   // Return after 1 period
-                    returns3.push_back(pattern.returns[1]);   // Return after 3 periods
-                    returns5.push_back(pattern.returns[2]);   // Return after 5 periods
-                    returns10.push_back(pattern.returns[3]);  // Return after 10 periods
-                    returns30.push_back(pattern.returns[4]);  // Return after 30 periods
-                    returns60.push_back(pattern.returns[5]);  // Return after 60 periods
-                    
-                    // --- Store relative-window return values ---
-                    // Returns at specific multiples of pattern length
-                    relReturns13.push_back(pattern.relReturns[0]);  // Return after 1/3 of pattern length
-                    relReturns12.push_back(pattern.relReturns[1]);  // Return after 1/2 of pattern length
-                    relReturns1.push_back(pattern.relReturns[2]);   // Return after 1x pattern length
-                    relReturns2.push_back(pattern.relReturns[3]);   // Return after 2x pattern length
-                    relReturns4.push_back(pattern.relReturns[4]);   // Return after 4x pattern length
-                } else {
-                    // --- Handle patterns without breakout ---
-                    // For patterns without a breakout, we still need to maintain consistent
-                    // vector sizes by adding NA values as placeholders
-                    
-                    // Add NA for breakout data
-                    timeStampBreakout.push_back(NA_INTEGER);  // No breakout timestamp (missing value)
-                    priceStampBreakout.push_back(NA_REAL);    // No breakout price (missing value)
-                    
-                    // Add NA for all fixed-window returns
-                    returns1.push_back(NA_REAL);   // No 1-period return
-                    returns3.push_back(NA_REAL);   // No 3-period return
-                    returns5.push_back(NA_REAL);   // No 5-period return
-                    returns10.push_back(NA_REAL);  // No 10-period return
-                    returns30.push_back(NA_REAL);  // No 30-period return
-                    returns60.push_back(NA_REAL);  // No 60-period return
-                    
-                    // Add NA for all relative-window returns
-                    relReturns13.push_back(NA_REAL);  // No 1/3-length return
-                    relReturns12.push_back(NA_REAL);  // No 1/2-length return
-                    relReturns1.push_back(NA_REAL);   // No 1x-length return
-                    relReturns2.push_back(NA_REAL);   // No 2x-length return
-                    relReturns4.push_back(NA_REAL);   // No 4x-length return
-                }
-                
-                // --- Advance the pattern search position ---
-                // Skip indices that have already been analyzed as part of this pattern
-                // Each pattern uses 6 points, so we can safely skip ahead by 5 positions
-                // (skipping 5 moves us to position i+5, the last point of the current pattern)
-                i = i + 5;
-                
-                // Exit the detector loop since we found a pattern
-                // This prevents checking other detectors at the same position
-                break;
+            } catch (const std::exception& e) {
+                Rcpp::Rcout << "[DEBUG] Exception in pattern detection: " << e.what() << std::endl;
             }
         }
     }
@@ -354,6 +393,9 @@ Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
     // ======================================================================
     // RESULT PREPARATION AND FORMATTING
     // ======================================================================
+    
+    Rcpp::Rcout << "[DEBUG] Detection complete. Found " << patternNames.size() 
+                << " patterns. Creating return structures." << std::endl;
     
     // --- Create main pattern information data frame ---
     // This contains the basic pattern metadata and trend information
@@ -419,6 +461,8 @@ Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
     
     // --- Return all results as a single nested list ---
     // This structure allows easy access to different aspects of the pattern data in R
+    Rcpp::Rcout << "[DEBUG] All data frames created successfully. Returning final list." << std::endl;
+    
     return Rcpp::List::create(
         Rcpp::Named("patternInfo") = patternInfo,     // Basic pattern information and trend context
         Rcpp::Named("Features2") = Features2,         // Pattern point timestamps and prices
