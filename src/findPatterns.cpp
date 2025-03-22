@@ -60,10 +60,31 @@ Rcpp::List resultList;
 Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
                         NumericVector Original_times,
                         NumericVector Original_prices) {
-    // Add minimal debug output
+    // Add detailed debug output
     Rcpp::Rcout << "[DEBUG] Starting findPatterns with " << Original_prices.size() 
                 << " prices, " << Original_times.size() << " times, and " 
                 << PrePro_indexFilter.size() << " pivot points" << std::endl;
+                
+    // Input validation
+    if (PrePro_indexFilter.size() < 7) {
+        Rcpp::Rcout << "[ERROR] Preprocessed index filter must have more than 6 elements for pattern detection." << std::endl;
+        return Rcpp::List::create(
+            Rcpp::Named("error") = "Preprocessed index filter must have more than 6 elements for pattern detection."
+        );
+    }
+    
+    // Validate index values are in range
+    for (int i = 0; i < PrePro_indexFilter.size(); i++) {
+        if (PrePro_indexFilter[i] < 0 || PrePro_indexFilter[i] >= Original_prices.size()) {
+            Rcpp::Rcout << "[ERROR] Index at position " << i << " (" << PrePro_indexFilter[i] 
+                        << ") is out of range (max: " << Original_prices.size() - 1 << ")" << std::endl;
+            return Rcpp::List::create(
+                Rcpp::Named("error") = "Index out of range in PrePro_indexFilter"
+            );
+        }
+    }
+    
+    Rcpp::Rcout << "[DEBUG] Input validation passed" << std::endl;
     
     // ---- Output containers ----
     // Pattern identification vectors
@@ -113,31 +134,6 @@ Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
     std::vector<double> relReturns1;
     std::vector<double> relReturns2;
     std::vector<double> relReturns4;
-    
-    // ---- Input validation ----
-    
-    // Check if the price and time series are of sufficient length
-    if (Original_prices.size() <= 6 || Original_times.size() <= 6) {
-        Rcpp::stop("Input price and time series must have more than 6 elements for pattern detection");
-    }
-    
-    // Check if price and time vectors have the same length
-    if (Original_prices.size() != Original_times.size()) {
-        Rcpp::stop("Price and time series must have the same length");
-    }
-    
-    // Check if PrePro_indexFilter is valid
-    if (PrePro_indexFilter.size() <= 6) {
-        Rcpp::stop("Preprocessed index filter must have more than 6 elements for pattern detection");
-    }
-    
-    // Controls whether the index starts at zero
-    if (PrePro_indexFilter[0] != 0) {
-        Function warning("warning");
-        warning("PrePro Vector indices does not start at Zero.");
-    }
-    
-    Rcpp::Rcout << "[DEBUG] Input validation successful" << std::endl;
     
     // ---- Data preparation ----
     
