@@ -16,6 +16,21 @@
 // Forward declarations
 double linearInterpolation(double x1, double x2, double y1, double y2, double x);
 bool isValidIndex(int idx, int maxSize);
+
+// Define the PatternData struct before using it
+struct PatternData {
+  int startIdx, leftShoulderIdx, necklineStartIdx, headIdx, necklineEndIdx, rightShoulderIdx, breakoutIdx;
+  std::string patternName;
+  std::vector<int> timeStamps;
+  std::vector<double> priceStamps;
+  double trendBeginPrice;
+  int trendBeginTime;
+  double trendEndPrice;
+  int trendEndTime;
+  std::vector<double> returns;       // Fixed time window returns
+  std::vector<double> relReturns;    // Relative time window returns
+};
+
 bool detectPattern(const NumericVector& prices, const NumericVector& times, int i, 
                   bool isInverted, double& leftNecklineValue, double& rightNecklineValue, 
                   double& firstPointNecklineValue);
@@ -53,14 +68,37 @@ public:
     bool detect(const NumericVector& prices, const NumericVector& times, 
                 int position, PatternData& outPattern) const override {
         // SHS-specific detection logic
-        // ...
+        // Simple placeholder implementation - replace with actual logic
+        bool patternDetected = false;
+        
+        // Check for SHS pattern conditions
+        if (position + 5 < prices.size() &&
+            prices[position] < prices[position+1] && 
+            prices[position+1] < prices[position+3] && 
+            prices[position+5] < prices[position+3]) {
+            
+            // Initialize pattern data
+            outPattern.patternName = "SHS";
+            outPattern.startIdx = position;
+            // Set other fields as needed
+            
+            patternDetected = true;
+        }
+        
         return patternDetected;
     }
     
     bool detectBreakout(const NumericVector& prices, const NumericVector& times,
                        int j, const PatternData& pattern) const override {
         // SHS-specific breakout detection
-        // ...
+        // Simple placeholder implementation - replace with actual logic
+        bool breakoutDetected = false;
+        
+        if (j > pattern.rightShoulderIdx && j < prices.size()) {
+            // Implement actual breakout detection logic here
+            breakoutDetected = true;
+        }
+        
         return breakoutDetected;
     }
     
@@ -70,7 +108,47 @@ public:
 };
 
 class ISHSDetector : public PatternDetector {
-    // Similar implementation for inverse SHS pattern
+public:
+    bool detect(const NumericVector& prices, const NumericVector& times, 
+                int position, PatternData& outPattern) const override {
+        // ISHS-specific detection logic
+        // Simple placeholder implementation - replace with actual logic
+        bool patternDetected = false;
+        
+        // Check for ISHS pattern conditions
+        if (position + 5 < prices.size() &&
+            prices[position] > prices[position+1] && 
+            prices[position+1] > prices[position+3] && 
+            prices[position+5] > prices[position+3]) {
+            
+            // Initialize pattern data
+            outPattern.patternName = "iSHS";
+            outPattern.startIdx = position;
+            // Set other fields as needed
+            
+            patternDetected = true;
+        }
+        
+        return patternDetected;
+    }
+    
+    bool detectBreakout(const NumericVector& prices, const NumericVector& times,
+                       int j, const PatternData& pattern) const override {
+        // ISHS-specific breakout detection
+        // Simple placeholder implementation - replace with actual logic
+        bool breakoutDetected = false;
+        
+        if (j > pattern.rightShoulderIdx && j < prices.size()) {
+            // Implement actual breakout detection logic here
+            breakoutDetected = true;
+        }
+        
+        return breakoutDetected;
+    }
+    
+    std::string getName() const override {
+        return "iSHS";
+    }
 };
 
 //' @name fastFind
@@ -484,9 +562,9 @@ void calculateReturns(std::vector<double>& returns,
 }
 
 // Example of using SIMD with Eigen library
-void calculateMultipleInterpolations(const VectorXd& x, const VectorXd& y,
-                                    const VectorXd& queryPoints,
-                                    VectorXd& results) {
+void calculateMultipleInterpolations(const Eigen::VectorXd& x, const Eigen::VectorXd& y,
+                                    const Eigen::VectorXd& queryPoints,
+                                    Eigen::VectorXd& results) {
     // Vectorized linear interpolation
  }
 
