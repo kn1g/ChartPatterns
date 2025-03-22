@@ -97,6 +97,30 @@
         // check that the first price is below neckline (else way too skewed)
         QuerySeries_prices[i  ] < linearInterpolation(QuerySeries_times[i+2], QuerySeries_times[i+4], QuerySeries_prices[i+2], QuerySeries_prices[i+4], QuerySeries_times[i])
      ){
+       // Prepare default values for all fields that may not get updated
+       bool localValid = false;
+       int localBreakoutIndex = NA_INTEGER;
+       int localTimeBO = NA_INTEGER;
+       double localPriceBO = NA_REAL;
+       
+       double localBeginnPreis = -1;
+       int localBeginnZeit = 99999991;
+       double localEndePreis = -1;
+       int localEndeZeit = 99999991;
+       
+       double Rendite1 = NA_REAL;
+       double Rendite3 = NA_REAL;
+       double Rendite5 = NA_REAL;
+       double Rendite10 = NA_REAL;
+       double Rendite30 = NA_REAL;
+       double Rendite60 = NA_REAL;
+       
+       double relRendite13 = NA_REAL;
+       double relRendite12 = NA_REAL;
+       double relRendite1 = NA_REAL;
+       double relRendite2 = NA_REAL;
+       double relRendite4 = NA_REAL;
+       
        // loop over data to find when the neckline is crossed = breakout
        for(int j= PrePro_indexFilter[i+5]; j < Original_times.size()-1; ++j){
          
@@ -106,40 +130,6 @@
            break;
          }
          
-         validPattern.push_back(false);
-         
-         // The pattern is valid and the we would open a position
-         // From here on we save step by step relevant information about the pattern
-         // First we save the index where the pattern occured in the original time series (this is redundant (see next step) but convinient) - WE NEED TO ADD 1 BECAUSE R INDIECES START AT 1 NOT 0 (like in C++)
-         firstindexOrigi.push_back(PrePro_indexFilter[i]+1);
-         // second we save the index where the pattern occured in the preprocessed series - WE NEED TO ADD 1 BECAUSE R INDIECES START AT 1 NOT 0 (like in C++)
-         firstIndexPrePro.push_back(i+1);
-         // third we save the breakout index - WE NEED TO ADD 1 BECAUSE R INDIECES START AT 1 NOT 0 (like in C++)
-         // The index is from the original time series
-         breakoutIndex.push_back(j+1);
-         // TODO add buyprice here as we only have the breakoutPrice
-         
-         // the pattern's name
-         PatternName.push_back("SHS");
-         
-         
-         // This is added to make the evaluation simpler
-         timeStamp0.push_back(QuerySeries_times[i]);
-         timeStamp1.push_back(QuerySeries_times[i+1]);
-         timeStamp2.push_back(QuerySeries_times[i+2]);
-         timeStamp3.push_back(QuerySeries_times[i+3]);
-         timeStamp4.push_back(QuerySeries_times[i+4]);
-         timeStamp5.push_back(QuerySeries_times[i+5]);
-         timeStampBreakOut.push_back(Original_times[j+1]);
-         
-         priceStamp0.push_back(QuerySeries_prices[i]);
-         priceStamp1.push_back(QuerySeries_prices[i+1]);
-         priceStamp2.push_back(QuerySeries_prices[i+2]);
-         priceStamp3.push_back(QuerySeries_prices[i+3]);
-         priceStamp4.push_back(QuerySeries_prices[i+4]);
-         priceStamp5.push_back(QuerySeries_prices[i+5]);
-         priceStampBreakOut.push_back(Original_prices[j+1]);
-         
          // Calculate interpolated neckline
          neckline_linearInterpolatedPointAtj = linearInterpolation(QuerySeries_times[i+2],QuerySeries_times[i+4],QuerySeries_prices[i+2],QuerySeries_prices[i+4], Original_times[j]);
          // check if Neckline is crossed
@@ -148,142 +138,115 @@
            // now the pattern is valid. But we only buy, if the next price (buyprice) is still above the right shoulder (limitbuy) 
            // check if buyprice is above right shoulder - no buy happens - only buy if under right shoulder
            if(Original_prices[j+1] < QuerySeries_prices[i+5]){
-             
-             
-             //------------------------
-             validPattern.push_back(true);
-             // We want to know some more about the pattern we found (like shape, trends, ...)
-             
-             // To get information abouot the symetry of the pattern we save the length and the slope between the PIPs
+             // Pattern is valid
+             localValid = true;
+             localBreakoutIndex = j + 1; // +1 for R indexing
+             localTimeBO = Original_times[j+1];
+             localPriceBO = Original_prices[j+1];
              
              // We also want the information how long the preceeding and the following trend 
              // a trend is given by rising or falling highs and lows (the PIPs)
              // therefore we check how many highs/lows preceed the identified pattern
              
              // Wir schauen bei SHS nur auf die aufsteigende Tiefpunkte zuvor
-             TrendBeginnPreisValue = 0;
-             TrendBeginnZeitValue  = 0;
              if(i > 2){
                for(int rev = i; rev > 2; rev = rev-2){
                  if(QuerySeries_prices[rev] > QuerySeries_prices[rev-2]){
-                   TrendBeginnPreisValue = QuerySeries_prices[rev-2];
-                   TrendBeginnZeitValue  = QuerySeries_times[rev-2];
+                   localBeginnPreis = QuerySeries_prices[rev-2];
+                   localBeginnZeit = QuerySeries_times[rev-2];
                  }else{
                    break;
                  }
                } // endfor
-             } else {
-               TrendBeginnPreisValue = -1;
-               TrendBeginnZeitValue  = 99999991;
              }
-             TrendBeginnPreis.push_back(TrendBeginnPreisValue);
-             TrendBeginnZeit.push_back(TrendBeginnZeitValue);
              
              // Wir schauen bei SHS nur auf die abfallende Hochpunkte danach
-             TrendEndePreisValue = 0;
-             TrendEndeZeitValue  = 0;
-             
              if(i+5 < (QuerySeries_prices.size()-2)){
                for(int forward = i+5; forward < (QuerySeries_prices.size()-2); forward = forward+2){
                  if(QuerySeries_prices[forward] > QuerySeries_prices[forward+2]){
-                   TrendEndePreisValue = QuerySeries_prices[forward+2];
-                   TrendEndeZeitValue  = QuerySeries_times[forward+2];
+                   localEndePreis = QuerySeries_prices[forward+2];
+                   localEndeZeit = QuerySeries_times[forward+2];
                  }else{
                    break;
                  }
                } // endfor
-             } else {
-               TrendEndePreisValue = -1;
-               TrendEndeZeitValue  = 99999991;
-               
              }
              
-             TrendEndePreis.push_back(TrendEndePreisValue);
-             TrendEndeZeit.push_back(TrendEndeZeitValue);
-             
-             // Gleich auch die Renditen berechnen 
-             // Fizes Fenster nach kauf = 1,3,5,10,20,30,60 
-             // und zusätzlich die Zeitfenster relativ zur Mustergröße: r = 1/3, 1/2, 3/4, 1, 2, 4
-             // Das ist an sich inkorrekt, da es nicht zu jedem Tag eine Beobachtung gibt:
-             // ausserdem ist der mean evlt besser aber so wurde es von Lo etc gemacht.
-             double Rendite1  = 0;
-             double Rendite3  = 0;
-             double Rendite5  = 0;
-             double Rendite10 = 0;
-             double Rendite30 = 0;
-             double Rendite60 = 0;
-             
-             double relRendite13  = 0;
-             double relRendite12  = 0;
-             double relRendite1   = 0;
-             double relRendite2   = 0;
-             double relRendite4   = 0;
-             
-             
-             
-             if(j >= Original_prices.size()-2){
-               Rendite1  = -1;
-               Rendite3  = -1;
-               Rendite5  = -1;
-               Rendite10 = -1;
-               Rendite30 = -1;
-               Rendite60 = -1;
+             // Gleich auch die Renditen berechnen
+             if(j < Original_prices.size()-2){
+               int patternLengthInDays = Original_times[j+1] - QuerySeries_times[i];
                
-               relRendite13  = -1;
-               relRendite12  = -1;
-               relRendite1   = -1;
-               relRendite2   = -1;
-               relRendite4   = -1;
-             } else{
-               int patternLengthInDays  = Original_times[j+1] - QuerySeries_times[i];
-               
-               int relDiff13 = patternLengthInDays/3; // this turncates. but seems ok to do the rounding 
-               int relDiff12 = patternLengthInDays/2; // this turncates. but seems ok to do the rounding 
-               int relDiff1  = patternLengthInDays;
-               int relDiff2  = patternLengthInDays*2;
-               int relDiff4  = patternLengthInDays*4;
+               int relDiff13 = patternLengthInDays/3;
+               int relDiff12 = patternLengthInDays/2;
+               int relDiff1 = patternLengthInDays;
+               int relDiff2 = patternLengthInDays*2;
+               int relDiff4 = patternLengthInDays*4;
                
                for(int forward = j+1; forward < (Original_prices.size()-2); ++forward){
                  // Differenz in Tage berechnen
                  int timeDiff = Original_times[forward] - Original_times[j+1];
-                 if(timeDiff > 1  && Rendite1 == 0) { Rendite1   = Original_prices[forward];  }
-                 if(timeDiff > 3  && Rendite3 == 0) { Rendite3   = Original_prices[forward];  }
-                 if(timeDiff > 5  && Rendite5 == 0) { Rendite5   = Original_prices[forward];  }
-                 if(timeDiff > 10 && Rendite10 == 0){ Rendite10  = Original_prices[forward]; }
-                 if(timeDiff > 30 && Rendite30 == 0){ Rendite30  = Original_prices[forward]; }
-                 if(timeDiff > 60 && Rendite60 == 0){ Rendite60  = Original_prices[forward]; }
+                 if(timeDiff > 1 && R_IsNA(Rendite1)) { Rendite1 = Original_prices[forward]; }
+                 if(timeDiff > 3 && R_IsNA(Rendite3)) { Rendite3 = Original_prices[forward]; }
+                 if(timeDiff > 5 && R_IsNA(Rendite5)) { Rendite5 = Original_prices[forward]; }
+                 if(timeDiff > 10 && R_IsNA(Rendite10)){ Rendite10 = Original_prices[forward]; }
+                 if(timeDiff > 30 && R_IsNA(Rendite30)){ Rendite30 = Original_prices[forward]; }
+                 if(timeDiff > 60 && R_IsNA(Rendite60)){ Rendite60 = Original_prices[forward]; }
                  
-                 if(timeDiff > relDiff13 && relRendite13 == 0){ relRendite13 = Original_prices[forward];  }
-                 if(timeDiff > relDiff12 && relRendite12 == 0){ relRendite12 = Original_prices[forward];  }
-                 if(timeDiff > relDiff1  && relRendite1 == 0) { relRendite1  = Original_prices[forward]; }
-                 if(timeDiff > relDiff2  && relRendite2 == 0) { relRendite2  = Original_prices[forward]; }
-                 if(timeDiff > relDiff4  && relRendite4 == 0) { relRendite4  = Original_prices[forward]; }
+                 if(timeDiff > relDiff13 && R_IsNA(relRendite13)){ relRendite13 = Original_prices[forward]; }
+                 if(timeDiff > relDiff12 && R_IsNA(relRendite12)){ relRendite12 = Original_prices[forward]; }
+                 if(timeDiff > relDiff1 && R_IsNA(relRendite1)) { relRendite1 = Original_prices[forward]; }
+                 if(timeDiff > relDiff2 && R_IsNA(relRendite2)) { relRendite2 = Original_prices[forward]; }
+                 if(timeDiff > relDiff4 && R_IsNA(relRendite4)) { relRendite4 = Original_prices[forward]; }
                  
-                 if(relRendite4 != 0 || Rendite60 != 0){ break; }
+                 if(!R_IsNA(relRendite4) || !R_IsNA(Rendite60)){ break; }
                }
              }
-             
-             Rendite1V.push_back(Rendite1);
-             Rendite3V.push_back(Rendite3);
-             Rendite5V.push_back(Rendite5);
-             Rendite10V.push_back(Rendite10);
-             Rendite30V.push_back(Rendite30);
-             Rendite60V.push_back(Rendite60);
-             
-             relRendite13V.push_back(relRendite13);
-             relRendite12V.push_back(relRendite12);
-             relRendite1V.push_back(relRendite1);
-             relRendite2V.push_back(relRendite2);
-             relRendite4V.push_back(relRendite4);
-             
-             
              
              break;
            } //end if - pattern has been detected
          } // if neckline is crossed
-         
        } // end for loop to check if neckline is crossed
        
+       // Always record this pattern candidate with all values
+       PatternName.push_back("SHS");
+       validPattern.push_back(localValid);
+       firstIndexPrePro.push_back(i+1); // +1 for R's 1-based indexing
+       firstindexOrigi.push_back(PrePro_indexFilter[i]+1);
+       breakoutIndex.push_back(localBreakoutIndex);
+       
+       timeStamp0.push_back(QuerySeries_times[i]);
+       timeStamp1.push_back(QuerySeries_times[i+1]);
+       timeStamp2.push_back(QuerySeries_times[i+2]);
+       timeStamp3.push_back(QuerySeries_times[i+3]);
+       timeStamp4.push_back(QuerySeries_times[i+4]);
+       timeStamp5.push_back(QuerySeries_times[i+5]);
+       timeStampBreakOut.push_back(localTimeBO);
+       
+       priceStamp0.push_back(QuerySeries_prices[i]);
+       priceStamp1.push_back(QuerySeries_prices[i+1]);
+       priceStamp2.push_back(QuerySeries_prices[i+2]);
+       priceStamp3.push_back(QuerySeries_prices[i+3]);
+       priceStamp4.push_back(QuerySeries_prices[i+4]);
+       priceStamp5.push_back(QuerySeries_prices[i+5]);
+       priceStampBreakOut.push_back(localPriceBO);
+       
+       TrendBeginnPreis.push_back(localBeginnPreis);
+       TrendBeginnZeit.push_back(localBeginnZeit);
+       TrendEndePreis.push_back(localEndePreis);
+       TrendEndeZeit.push_back(localEndeZeit);
+       
+       Rendite1V.push_back(Rendite1);
+       Rendite3V.push_back(Rendite3);
+       Rendite5V.push_back(Rendite5);
+       Rendite10V.push_back(Rendite10);
+       Rendite30V.push_back(Rendite30);
+       Rendite60V.push_back(Rendite60);
+       
+       relRendite13V.push_back(relRendite13);
+       relRendite12V.push_back(relRendite12);
+       relRendite1V.push_back(relRendite1);
+       relRendite2V.push_back(relRendite2);
+       relRendite4V.push_back(relRendite4);
      } // end if points satisfy the rough condition
      
      
@@ -300,6 +263,30 @@
         // Frist potint above neckling (else way too skewed)
         QuerySeries_prices[i ] > linearInterpolation(QuerySeries_times[i+2], QuerySeries_times[i+4], QuerySeries_prices[i+2], QuerySeries_prices[i+4], QuerySeries_times[i ])
      ){
+       // Prepare default values for all fields that may not get updated
+       bool localValid = false;
+       int localBreakoutIndex = NA_INTEGER;
+       int localTimeBO = NA_INTEGER;
+       double localPriceBO = NA_REAL;
+       
+       double localBeginnPreis = -1;
+       int localBeginnZeit = 99999991;
+       double localEndePreis = -1;
+       int localEndeZeit = 99999991;
+       
+       double Rendite1 = NA_REAL;
+       double Rendite3 = NA_REAL;
+       double Rendite5 = NA_REAL;
+       double Rendite10 = NA_REAL;
+       double Rendite30 = NA_REAL;
+       double Rendite60 = NA_REAL;
+       
+       double relRendite13 = NA_REAL;
+       double relRendite12 = NA_REAL;
+       double relRendite1 = NA_REAL;
+       double relRendite2 = NA_REAL;
+       double relRendite4 = NA_REAL;
+       
        // loop over data to find when the neckline is crossed = breakout
        for(int j= PrePro_indexFilter[i+5]; j < Original_times.size()-1; ++j){
          
@@ -308,33 +295,6 @@
            break;
          }
          
-         validPattern.push_back(false);
-         
-         // save patterninfo
-         firstIndexPrePro.push_back(i+1);
-         firstindexOrigi.push_back(PrePro_indexFilter[i]+1);
-         breakoutIndex.push_back(j+1);
-         PatternName.push_back("iSHS");
-         
-         // This is added to make the evaluation simpler
-         timeStamp0.push_back(QuerySeries_times[i]);
-         timeStamp1.push_back(QuerySeries_times[i+1]);
-         timeStamp2.push_back(QuerySeries_times[i+2]);
-         timeStamp3.push_back(QuerySeries_times[i+3]);
-         timeStamp4.push_back(QuerySeries_times[i+4]);
-         timeStamp5.push_back(QuerySeries_times[i+5]);
-         timeStampBreakOut.push_back(Original_times[j+1]);
-         
-         priceStamp0.push_back(QuerySeries_prices[i]);
-         priceStamp1.push_back(QuerySeries_prices[i+1]);
-         priceStamp2.push_back(QuerySeries_prices[i+2]);
-         priceStamp3.push_back(QuerySeries_prices[i+3]);
-         priceStamp4.push_back(QuerySeries_prices[i+4]);
-         priceStamp5.push_back(QuerySeries_prices[i+5]);
-         priceStampBreakOut.push_back(Original_prices[j+1]);
-         
-         
-         
          // Calculate interpolated neckline
          neckline_linearInterpolatedPointAtj = linearInterpolation(QuerySeries_times[i+2],QuerySeries_times[i+4],QuerySeries_prices[i+2],QuerySeries_prices[i+4], Original_times[j]);
          // check if Neckline is crossed
@@ -342,139 +302,119 @@
            
            // check if buyprice is under right shoulder - no buy happens - only buy if above right shoulder
            if(Original_prices[j+1] > QuerySeries_prices[i+5]){
-             
-             // calculate slopes
-             validPattern.push_back(true);
+             // Pattern is valid
+             localValid = true;
+             localBreakoutIndex = j + 1; // +1 for R indexing
+             localTimeBO = Original_times[j+1];
+             localPriceBO = Original_prices[j+1];
              
              // We also want the information how long the preceeding and the following trend 
              // a trend is given by rising or falling highs and lows (the PIPs)
              // therefore we check how many highs/lows preceed the identified pattern
              
              // Wir schauen bei iSHS nur auf die abfallende Hochpunkte davor
-             TrendBeginnPreisValue = 0;
-             TrendBeginnZeitValue  = 0;
              if(i > 2){
                for(int rev = i; rev > 2; rev = rev-2){
                  if(QuerySeries_prices[rev] < QuerySeries_prices[rev-2]){
-                   TrendBeginnPreisValue = QuerySeries_prices[rev-2];
-                   TrendBeginnZeitValue  = QuerySeries_times[rev-2];
+                   localBeginnPreis = QuerySeries_prices[rev-2];
+                   localBeginnZeit = QuerySeries_times[rev-2];
                  }else{
                    break;
                  }
                } // endfor
-             } else {
-               TrendBeginnPreisValue = -1;
-               TrendBeginnZeitValue  = 99999991;
              }
-             TrendBeginnPreis.push_back(TrendBeginnPreisValue);
-             TrendBeginnZeit.push_back(TrendBeginnZeitValue);
              
              // Wir schauen bei iSHS nur auf die aufsteignden Tiefpunkte danach
-             TrendEndePreisValue = 0;
-             TrendEndeZeitValue  = 0;
-             
              if(i+5 < (QuerySeries_prices.size()-2)){
                for(int forward = i+5; forward < (QuerySeries_prices.size()-2); forward = forward+2){
                  if(QuerySeries_prices[forward] < QuerySeries_prices[forward+2]){
-                   TrendEndePreisValue = QuerySeries_prices[forward+2];
-                   TrendEndeZeitValue  = QuerySeries_times[forward+2];
+                   localEndePreis = QuerySeries_prices[forward+2];
+                   localEndeZeit = QuerySeries_times[forward+2];
                  }else{
                    break;
                  }
                } // endfor
-             } else {
-               TrendEndePreisValue = -1;
-               TrendEndeZeitValue  = 99999991;
              }
              
-             TrendEndePreis.push_back(TrendEndePreisValue);
-             TrendEndeZeit.push_back(TrendEndeZeitValue);
-             
-             // Gleich auch die Renditen berechnen 
-             // Fizes Fenster nach kauf = 1,3,5,10,20,30,60 
-             // und zusätzlich die Zeitfenster relativ zur Mustergröße: r = 1/3, 1/2, 3/4, 1, 2, 4
-             // Das ist an sich inkorrekt, da es nicht zu jedem Tag eine Beobachtung gibt:
-             // ausserdem ist der mean evlt besser aber so wurde es von Lo etc gemacht.
-             double Rendite1  = 0;
-             double Rendite3  = 0;
-             double Rendite5  = 0;
-             double Rendite10 = 0;
-             double Rendite30 = 0;
-             double Rendite60 = 0;
-             
-             double relRendite13  = 0;
-             double relRendite12  = 0;
-             double relRendite1   = 0;
-             double relRendite2   = 0;
-             double relRendite4   = 0;
-             
-             if(j >= Original_prices.size()-2){
-               Rendite1  = -1;
-               Rendite3  = -1;
-               Rendite5  = -1;
-               Rendite10 = -1;
-               Rendite30 = -1;
-               Rendite60 = -1;
+             // Gleich auch die Renditen berechnen
+             if(j < Original_prices.size()-2){
+               int patternLengthInDays = Original_times[j+1] - QuerySeries_times[i];
                
-               relRendite13  = -1;
-               relRendite12  = -1;
-               relRendite1   = -1;
-               relRendite2   = -1;
-               relRendite4   = -1;
-             } else {
-               int patternLengthInDays  = Original_times[j+1] - QuerySeries_times[i];
-               
-               int relDiff13 = patternLengthInDays/3; // this turncates. but seems ok to do the rounding 
-               int relDiff12 = patternLengthInDays/2; // this turncates. but seems ok to do the rounding 
-               int relDiff1  = patternLengthInDays;
-               int relDiff2  = patternLengthInDays*2;
-               int relDiff4  = patternLengthInDays*4;
+               int relDiff13 = patternLengthInDays/3;
+               int relDiff12 = patternLengthInDays/2;
+               int relDiff1 = patternLengthInDays;
+               int relDiff2 = patternLengthInDays*2;
+               int relDiff4 = patternLengthInDays*4;
                
                for(int forward = j+1; forward < (Original_prices.size()-2); ++forward){
                  // Differenz in Tage berechnen
                  int timeDiff = Original_times[forward] - Original_times[j+1];
-                 if(timeDiff > 1  && Rendite1 == 0) { Rendite1   = log( Original_prices[forward] / Original_prices[j+1] );  }
-                 if(timeDiff > 3  && Rendite3 == 0) { Rendite3   = Original_prices[forward] / Original_prices[j+1];  }
-                 if(timeDiff > 5  && Rendite5 == 0) { Rendite5   = Original_prices[forward] / Original_prices[j+1];  }
-                 if(timeDiff > 10 && Rendite10 == 0){ Rendite10  = Original_prices[forward] / Original_prices[j+1]; }
-                 if(timeDiff > 30 && Rendite30 == 0){ Rendite30  = Original_prices[forward] / Original_prices[j+1]; }
-                 if(timeDiff > 60 && Rendite60 == 0){ Rendite60  = Original_prices[forward] / Original_prices[j+1]; }
+                 if(timeDiff > 1 && R_IsNA(Rendite1)) { Rendite1 = log(Original_prices[forward] / Original_prices[j+1]); }
+                 if(timeDiff > 3 && R_IsNA(Rendite3)) { Rendite3 = Original_prices[forward] / Original_prices[j+1]; }
+                 if(timeDiff > 5 && R_IsNA(Rendite5)) { Rendite5 = Original_prices[forward] / Original_prices[j+1]; }
+                 if(timeDiff > 10 && R_IsNA(Rendite10)){ Rendite10 = Original_prices[forward] / Original_prices[j+1]; }
+                 if(timeDiff > 30 && R_IsNA(Rendite30)){ Rendite30 = Original_prices[forward] / Original_prices[j+1]; }
+                 if(timeDiff > 60 && R_IsNA(Rendite60)){ Rendite60 = Original_prices[forward] / Original_prices[j+1]; }
                  
-                 if(timeDiff > relDiff13 && relRendite13 == 0){ relRendite13 = Original_prices[forward] / Original_prices[j+1];  }
-                 if(timeDiff > relDiff12 && relRendite12 == 0){ relRendite12 = Original_prices[forward] / Original_prices[j+1];  }
-                 if(timeDiff > relDiff1  && relRendite1 == 0) { relRendite1  = Original_prices[forward] / Original_prices[j+1]; }
-                 if(timeDiff > relDiff2  && relRendite2 == 0) { relRendite2  = Original_prices[forward] / Original_prices[j+1]; }
-                 if(timeDiff > relDiff4  && relRendite4 == 0) { relRendite4  = Original_prices[forward] / Original_prices[j+1]; }
+                 if(timeDiff > relDiff13 && R_IsNA(relRendite13)){ relRendite13 = Original_prices[forward] / Original_prices[j+1]; }
+                 if(timeDiff > relDiff12 && R_IsNA(relRendite12)){ relRendite12 = Original_prices[forward] / Original_prices[j+1]; }
+                 if(timeDiff > relDiff1 && R_IsNA(relRendite1)) { relRendite1 = Original_prices[forward] / Original_prices[j+1]; }
+                 if(timeDiff > relDiff2 && R_IsNA(relRendite2)) { relRendite2 = Original_prices[forward] / Original_prices[j+1]; }
+                 if(timeDiff > relDiff4 && R_IsNA(relRendite4)) { relRendite4 = Original_prices[forward] / Original_prices[j+1]; }
                  
-                 if(relRendite4 != 0 || Rendite60 != 0){ break; }
+                 if(!R_IsNA(relRendite4) || !R_IsNA(Rendite60)){ break; }
                }
-               
              }
              
-             Rendite1V.push_back(Rendite1);
-             Rendite3V.push_back(Rendite3);
-             Rendite5V.push_back(Rendite5);
-             Rendite10V.push_back(Rendite10);
-             Rendite30V.push_back(Rendite30);
-             Rendite60V.push_back(Rendite60);
-             
-             relRendite13V.push_back(relRendite13);
-             relRendite12V.push_back(relRendite12);
-             relRendite1V.push_back(relRendite1);
-             relRendite2V.push_back(relRendite2);
-             relRendite4V.push_back(relRendite4);
-             
+             break;
            } // buy price shoulder check
            
-           
-           break;
          } // if neckline is crossed
        } // loop over data when neckline corssed 
-       // if the original Prices fall below the right shoulder we can stop. The Pattern would not be valid
        
+       // Always record this pattern candidate with all values
+       PatternName.push_back("iSHS");
+       validPattern.push_back(localValid);
+       firstIndexPrePro.push_back(i+1); // +1 for R's 1-based indexing
+       firstindexOrigi.push_back(PrePro_indexFilter[i]+1);
+       breakoutIndex.push_back(localBreakoutIndex);
+       
+       timeStamp0.push_back(QuerySeries_times[i]);
+       timeStamp1.push_back(QuerySeries_times[i+1]);
+       timeStamp2.push_back(QuerySeries_times[i+2]);
+       timeStamp3.push_back(QuerySeries_times[i+3]);
+       timeStamp4.push_back(QuerySeries_times[i+4]);
+       timeStamp5.push_back(QuerySeries_times[i+5]);
+       timeStampBreakOut.push_back(localTimeBO);
+       
+       priceStamp0.push_back(QuerySeries_prices[i]);
+       priceStamp1.push_back(QuerySeries_prices[i+1]);
+       priceStamp2.push_back(QuerySeries_prices[i+2]);
+       priceStamp3.push_back(QuerySeries_prices[i+3]);
+       priceStamp4.push_back(QuerySeries_prices[i+4]);
+       priceStamp5.push_back(QuerySeries_prices[i+5]);
+       priceStampBreakOut.push_back(localPriceBO);
+       
+       TrendBeginnPreis.push_back(localBeginnPreis);
+       TrendBeginnZeit.push_back(localBeginnZeit);
+       TrendEndePreis.push_back(localEndePreis);
+       TrendEndeZeit.push_back(localEndeZeit);
+       
+       Rendite1V.push_back(Rendite1);
+       Rendite3V.push_back(Rendite3);
+       Rendite5V.push_back(Rendite5);
+       Rendite10V.push_back(Rendite10);
+       Rendite30V.push_back(Rendite30);
+       Rendite60V.push_back(Rendite60);
+       
+       relRendite13V.push_back(relRendite13);
+       relRendite12V.push_back(relRendite12);
+       relRendite1V.push_back(relRendite1);
+       relRendite2V.push_back(relRendite2);
+       relRendite4V.push_back(relRendite4);
      } //end if - pattern has been detected 
-     
-   } // end if points satisfy the rough condition
+   
+   } // end main loop
    
    
    // RCPP can not handle data.frames with more  than 20 columns. We need to split the information and then put it together in a LIST in the end
