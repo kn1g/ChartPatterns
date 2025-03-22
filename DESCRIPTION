@@ -11,6 +11,7 @@ License: What license is it under?
 LazyData: TRUE
 Imports:
     Rcpp,
-    xts
-LinkingTo: Rcpp, xts
+    xts,
+    RcppEigen
+LinkingTo: Rcpp, xts, RcppEigen
 RoxygenNote: 7.3.1
