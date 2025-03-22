@@ -14,11 +14,44 @@ fastFind <- function(PrePro_indexFilter, Original_times, Original_prices) {
     .Call(`_ChartPatterns_fastFind`, PrePro_indexFilter, Original_times, Original_prices)
 }
 
+#' @name fastFindII
+#' @title fastFind Patterns
+#' @description The pattern recognition is done for all paterns in one loop. The single functions loop per pattern over the dataset
+#' @param prices Vector with prices
+#' @param time Vector with time or indieces
+#' @param mask with PIPs in the price-time vectors
+#' @return Returns First the index where a pattern is located
+#' @examples
+#' c(1:10)
+#'
+#' @export
+FastFindII <- function(PrePro_indexFilter, Original_times, Original_prices) {
+    .Call(`_ChartPatterns_FastFindII`, PrePro_indexFilter, Original_times, Original_prices)
+}
+
+FastFindII_chaosRegin <- function(PrePro_indexFilter, Original_times, Original_prices) {
+    .Call(`_ChartPatterns_FastFindII_chaosRegin`, PrePro_indexFilter, Original_times, Original_prices)
+}
+
 #' @name fastFind
 NULL
 
 fastFind_chaosRegin <- function(PrePro_indexFilter, Original_times, Original_prices) {
     .Call(`_ChartPatterns_fastFind_chaosRegin`, PrePro_indexFilter, Original_times, Original_prices)
+}
+
+#' @name findPatterns
+#' @title findPatterns - Efficient Pattern Recognition
+#' @description Detects chart patterns in financial time series data with optimized implementation
+#' @param PrePro_indexFilter Vector with indices of pivot points in the original data
+#' @param Original_times Vector with time values
+#' @param Original_prices Vector with price values
+#' @return Returns a list with pattern information, timestamps, prices, and performance metrics
+#' @examples
+#' 
+#' @export
+findPatterns <- function(PrePro_indexFilter, Original_times, Original_prices) {
+    .Call(`_ChartPatterns_findPatterns`, PrePro_indexFilter, Original_times, Original_prices)
 }
 
 #' @name getSlope
@@ -48,5 +81,12 @@ getSlope <- function(x1, x2, y1, y2) {
 #' @export
 linearInterpolation <- function(x1, x2, y1, y2, atPosition) {
     .Call(`_ChartPatterns_linearInterpolation`, x1, x2, y1, y2, atPosition)
+}
+
+#' @name safeLinearInterpolation
+NULL
+
+safeLinearInterpolation <- function(x1, x2, y1, y2, atPosition) {
+    .Call(`_ChartPatterns_safeLinearInterpolation`, x1, x2, y1, y2, atPosition)
 }
 

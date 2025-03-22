@@ -174,15 +174,15 @@ Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
         // For each detector, check if a pattern is detected at position i
         for (const auto& detector : detectors) {
             PatternData pattern;
-            if (detector->detect(QuerySeries_prices, QuerySeries_times, i, pattern)) {
-                
-                // OPTIMIZATION: Safety check against theoretical maximum to prevent memory issues
-                if (patterns.size() >= static_cast<size_t>(maxPossiblePatterns)) {
-                    Rcpp::stop("Maximum pattern count exceeded. Found more patterns than theoretically expected based on data size. Please report this issue.");
-                }
-                
-                // Pattern is detected, now search for breakout
-                bool foundBreakout = false;
+          if (detector->detect(QuerySeries_prices, QuerySeries_times, i, pattern)) {
+            
+            // OPTIMIZATION: Safety check against theoretical maximum to prevent memory issues
+            if (patternNames.size() >= static_cast<size_t>(maxPossiblePatterns)) {
+              Rcpp::stop("Maximum pattern count exceeded. Found more patterns than theoretically expected based on data size. Please report this issue.");
+            }
+            
+            // Pattern is detected, now search for breakout
+            bool foundBreakout = false;
                 
                 // OPTIMIZATION: Start breakout search after right shoulder
                 // This avoids unnecessary checks before the pattern is complete
