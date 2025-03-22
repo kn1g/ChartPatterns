@@ -1,0 +1,16 @@
+Package: ChartPatterns
+Type: Package
+Title: This package contains a collection of functions to identify classical
+    Chart patterns in Price-(Volume-)TimeSerieses
+Version: 0.1
+Date: 2015-07-01
+Author: The kn1g
+Maintainer: Complain to <thekn1g@fa.ke>
+Description: More about what it does (maybe more than one line).
+License: What license is it under?
+LazyData: TRUE
+Imports:
+    Rcpp,
+    xts
+LinkingTo: Rcpp, xts
+RoxygenNote: 7.3.1
