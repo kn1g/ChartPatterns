@@ -3,6 +3,8 @@
 #include <cmath>
 #include "cppHeader.hpp"
 #include <RcppEigen.h>
+#include <algorithm>
+#include <Rcpp.h>
 
 /**
  * @file FastFind.cpp
@@ -14,7 +16,6 @@
  */
 
 // Forward declarations
-double linearInterpolation(double x1, double x2, double y1, double y2, double x);
 bool isValidIndex(int idx, int maxSize);
 
 // Define the PatternData struct before using it
@@ -44,7 +45,6 @@ const double MIN_HEAD_SHOULDER_DIFF = 0.01; // Minimum price difference to consi
 const int MAX_LOOK_AHEAD = 60; // Maximum periods to check for return calculations
 
 // Constants like 99999991 appear in the code
-const int INVALID_TIME = 99999991;
 
 // Define a common interface for all pattern detectors
 class PatternDetector {
@@ -239,11 +239,8 @@ public:
     }
     
     // Pre-calculate neckline values (reused for both pattern types)
-    double leftShoulderNecklineValue = 0;
-    double rightShoulderNecklineValue = 0;
-    double firstPointNecklineValue = 0;
+    // Note: These values are used in pattern detection but may not be needed here
     
-    bool isInverted = false; // Start with SHS
     for (int attempt = 0; attempt < 2; attempt++) {
         for(const auto& detector : detectors) {
             PatternData pattern;
@@ -254,7 +251,6 @@ public:
                 patterns.push_back(pattern);
             }
         }
-        isInverted = true; // Try iSHS on second attempt
     }
   }
   

@@ -57,14 +57,10 @@
    
    // Trendmessung
    // Price and Times of Trend Start and Trend end
-   double TrendBeginnPreisValue;
    std::vector<double> TrendBeginnPreis;  
-   int TrendBeginnZeitValue;
    std::vector<int> TrendBeginnZeit;  
    
-   double TrendEndePreisValue;
    std::vector<double> TrendEndePreis;  
-   int TrendEndeZeitValue;
    std::vector<int> TrendEndeZeit;  
    
    // Rendite und Trend Kennzahlen
