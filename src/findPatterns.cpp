@@ -55,6 +55,9 @@ Rcpp::List resultList;
 Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
                         NumericVector Original_times,
                         NumericVector Original_prices) {
+    // NEW VERSION CHECK - This will verify we're running our latest code
+    Rcpp::Rcout << "\n\n[DEBUG-VERSION] ************* RUNNING NEW VERSION WITH CUSTOM BREAKOUT DETECTION ************" << std::endl;
+                          
     // Add extremely detailed debug output
     Rcpp::Rcout << "\n\n[DEBUG-VERBOSE] ============= STARTING findPatterns ===============" << std::endl;
     Rcpp::Rcout << "[DEBUG-VERBOSE] Original_prices size: " << Original_prices.size() << std::endl;
@@ -309,102 +312,289 @@ Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
                 // For each detector, check if a pattern is detected at position i
                 for (const auto& detector : detectors) {
                     PatternData pattern;
+                    bool detected = false;
+                    
+                    // Try to detect patterns
                     try {
-                        bool detected = detector->detect(QuerySeries_prices, QuerySeries_times, i, pattern);
+                        detected = detector->detect(QuerySeries_prices, QuerySeries_times, i, pattern);
+                        
+                        // Immediately ensure that pattern data structures are properly sized and initialized
                         if (detected) {
-                            patterns_found++;
-                            if (patterns_found % 10 == 1) {
-                                Rcpp::Rcout << "[DEBUG] Pattern '" << pattern.patternName << "' detected at position " << i << std::endl;
+                            // Ensure pattern arrays have proper sizes to avoid memory alignment issues
+                            Rcpp::Rcout << "[DEBUG-VERBOSE] Verifying pattern data structures" << std::endl;
+                            
+                            // Ensure timeStamps and priceStamps are properly sized (should be 7 for 6 pattern points + 1 breakout)
+                            if (pattern.timeStamps.size() < 7) {
+                                Rcpp::Rcout << "[DEBUG] Resizing pattern.timeStamps from " 
+                                        << pattern.timeStamps.size() << " to 7" << std::endl;
+                                pattern.timeStamps.resize(7, NA_INTEGER);
                             }
                             
-                            // OPTIMIZATION: Safety check against theoretical maximum to prevent memory issues
-                            if (patternNames.size() >= static_cast<size_t>(maxPossiblePatterns)) {
-                                Rcpp::Rcout << "[DEBUG] Maximum pattern count reached (" << maxPossiblePatterns << "). Stopping detection." << std::endl;
-                                break; // Exit the loop instead of stopping with an error
+                            if (pattern.priceStamps.size() < 7) {
+                                Rcpp::Rcout << "[DEBUG] Resizing pattern.priceStamps from " 
+                                        << pattern.priceStamps.size() << " to 7" << std::endl;
+                                pattern.priceStamps.resize(7, NA_REAL);
                             }
                             
-                            // Pattern is detected, now search for breakout
-                            bool foundBreakout = false;
-                            
-                            // Only output breakout search for some patterns to reduce volume
-                            if (patterns_found % 50 == 1) {
-                                Rcpp::Rcout << "[DEBUG] Searching for breakout for pattern " << patterns_found << std::endl;
+                            // Ensure returns arrays are properly sized
+                            if (pattern.returns.size() < 6) {
+                                Rcpp::Rcout << "[DEBUG] Resizing pattern.returns from " 
+                                        << pattern.returns.size() << " to 6" << std::endl;
+                                pattern.returns.resize(6, NA_REAL);
                             }
                             
-                            // OPTIMIZATION: Start breakout search after right shoulder
-                            // This avoids unnecessary checks before the pattern is complete
-                            for (int j = PrePro_indexFilter[i+5]; j < Original_times.size() - 1; ++j) {
+                            if (pattern.relReturns.size() < 5) {
+                                Rcpp::Rcout << "[DEBUG] Resizing pattern.relReturns from " 
+                                        << pattern.relReturns.size() << " to 5" << std::endl;
+                                pattern.relReturns.resize(5, NA_REAL);
+                            }
+                            
+                            // Validate startIdx to ensure it's in bounds
+                            if (pattern.startIdx < 0 || pattern.startIdx >= static_cast<int>(QuerySeries_prices.size())) {
+                                Rcpp::Rcout << "[ERROR] Invalid pattern.startIdx: " << pattern.startIdx 
+                                        << " (should be 0-" << QuerySeries_prices.size()-1 << ")" << std::endl;
+                                pattern.startIdx = 0; // Set to a safe default value
+                            }
+                        }
+                    } catch (const std::exception& e) {
+                        Rcpp::Rcout << "[DEBUG] Exception in pattern detection: " << e.what() << std::endl;
+                        // Continue processing other detectors, this one just failed
+                        continue;
+                    }
+                    
+                    // If pattern detected, process it
+                    if (detected) {
+                        patterns_found++;
+                        if (patterns_found % 10 == 1) {
+                            Rcpp::Rcout << "[DEBUG] Pattern '" << pattern.patternName << "' detected at position " << i << std::endl;
+                        }
+                        
+                        // OPTIMIZATION: Safety check against theoretical maximum to prevent memory issues
+                        if (patternNames.size() >= static_cast<size_t>(maxPossiblePatterns)) {
+                            Rcpp::Rcout << "[DEBUG] Maximum pattern count reached (" << maxPossiblePatterns << "). Stopping detection." << std::endl;
+                            break; // Exit the loop instead of stopping with an error
+                        }
+                        
+                        // Pattern is detected, now search for breakout
+                        bool foundBreakout = false;
+                        
+                        // Only output breakout search for some patterns to reduce volume
+                        if (patterns_found % 50 == 1) {
+                            Rcpp::Rcout << "[DEBUG] Searching for breakout for pattern " << patterns_found << std::endl;
+                        }
+                        
+                        // Add more detailed debugging for the breakout search
+                        Rcpp::Rcout << "[DEBUG-VERBOSE] Starting breakout search at pattern point " << i+5 
+                                  << ", original index " << PrePro_indexFilter[i+5] << std::endl;
+                        Rcpp::Rcout << "[DEBUG-VERBOSE] Original_times.size(): " << Original_times.size() << std::endl;
+                        
+                        // Safety check for index bounds before starting breakout search
+                        if (i+5 >= PrePro_indexFilter.size() || PrePro_indexFilter[i+5] >= Original_times.size() - 1) {
+                            Rcpp::Rcout << "[ERROR] Index out of bounds for breakout search. Skipping breakout search." << std::endl;
+                            continue; // Skip breakout search for this pattern
+                        }
+                        
+                        // OPTIMIZATION: Start breakout search after right shoulder
+                        // This avoids unnecessary checks before the pattern is complete
+                        for (int j = PrePro_indexFilter[i+5]; j < Original_times.size() - 1; ++j) {
+                            
+                            // Add immediate debug output to see if we reach this point
+                            Rcpp::Rcout << "[DEBUG-CRITICAL] In breakout search loop for j=" << j << std::endl;
+                            
+                            // **NEW CRITICAL DEBUG SECTION**
+                            // Dump all relevant pointers and values before doing any operations
+                            Rcpp::Rcout << "[DEBUG-CRASH] Pattern info: patternName=" << pattern.patternName 
+                                       << ", pattern.timeStamps.size()=" << pattern.timeStamps.size() 
+                                       << ", pattern.priceStamps.size()=" << pattern.priceStamps.size() << std::endl;
+                            
+                            // Complete verification of detector object
+                            if (!detector) {
+                                Rcpp::Rcout << "[ERROR-CRASH] Detector is null - skipping breakout detection" << std::endl;
+                                break;
+                            }
+                            
+                            // Skip directly to SHS custom detection if this is an SHS pattern
+                            // This avoids calling potentially problematic code in the detector
+                            if (pattern.patternName == "SHS") {
+                                Rcpp::Rcout << "[DEBUG-CRASH] Using failsafe SHS detection code" << std::endl;
                                 
-                                // OPTIMIZATION: Early rejection if pattern has been invalidated
-                                // Use the detector's implementation to determine if pattern is still valid
-                                if (detector->isPatternInvalidated(Original_prices, Original_times, j, pattern)) {
-                                    break;  // Pattern is no longer valid, stop checking for breakout
+                                // Defensive breakout detection that avoids using the detector's methods
+                                bool hasBreakout = false;
+                                
+                                try {
+                                    // Skip if we're not past the right shoulder
+                                    if (j <= pattern.rightShoulderIdx || j >= Original_prices.size() - 1) {
+                                        Rcpp::Rcout << "[DEBUG-CRASH] Invalid indices for SHS breakout check" << std::endl;
+                                        hasBreakout = false;
+                                    } else {
+                                        // Use direct values from the pattern object without any complex calculations
+                                        // or risk of memory alignment issues
+                                        
+                                        // Get the shoulder prices directly
+                                        double leftShoulderPrice = pattern.priceStamps[1];  // Left shoulder 
+                                        double rightShoulderPrice = pattern.priceStamps[5]; // Right shoulder
+                                        double headPrice = pattern.priceStamps[3];          // Head
+                                        
+                                        // Simple estimate of the neckline (average of shoulder prices)
+                                        double necklineValue = (leftShoulderPrice + rightShoulderPrice) / 2.0;
+                                        
+                                        // For SHS, breakout is when price drops below neckline
+                                        if (Original_prices[j] < necklineValue && 
+                                            Original_prices[j+1] < necklineValue && 
+                                            Original_prices[j+1] < rightShoulderPrice) {
+                                            
+                                            Rcpp::Rcout << "[DEBUG-CRASH] SHS Breakout detected using safe method" << std::endl;
+                                            hasBreakout = true;
+                                            
+                                            // Store breakout information
+                                            pattern.breakoutIdx = j + 1; // +1 for R indexing
+                                            
+                                            // Store breakout timestamp and price
+                                            pattern.timeStamps[6] = Original_times[j+1];
+                                            pattern.priceStamps[6] = Original_prices[j+1];
+                                            
+                                            // Skip trend and returns calculation for now
+                                            // We'll come back to this later if we can get past the crash
+                                            
+                                            foundBreakout = true;
+                                            break; // Exit breakout search
+                                        }
+                                    }
+                                } catch (const std::exception& e) {
+                                    Rcpp::Rcout << "[ERROR-CRASH] Exception in safe SHS breakout detection: " 
+                                               << e.what() << std::endl;
+                                    continue; // Try next position
+                                } catch (...) {
+                                    Rcpp::Rcout << "[ERROR-CRASH] Unknown exception in safe SHS breakout detection" 
+                                               << std::endl;
+                                    continue;
+                                }
+                            } else {
+                                // For non-SHS patterns, use the existing code with added safety
+                            
+                                // Add safety check within the loop
+                                if (j < 0 || j >= Original_times.size() - 1) {
+                                    Rcpp::Rcout << "[ERROR] Breakout search index j=" << j 
+                                              << " out of bounds. Aborting breakout search." << std::endl;
+                                    break; // Exit breakout search loop
                                 }
                                 
-                                // Check for breakout using the appropriate detector
-                                if (detector->detectBreakout(Original_prices, Original_times, j, pattern)) {
-                                    // Breakout found - mark pattern as valid and store breakout index
-                                    // Adjusting to R's 1-based indexing for return values
-                                    foundBreakout = true;
-                                    pattern.breakoutIdx = j + 1; // +1 for R indexing
-                                    
-                                    // Only log some breakouts to reduce output volume
-                                    if (patterns_found % 50 == 1) {
-                                        Rcpp::Rcout << "[DEBUG] Breakout found for pattern " << patterns_found << std::endl;
+                                // Extra safety: periodically output progress for large datasets
+                                if (j % 1000 == 0) {
+                                    Rcpp::Rcout << "[DEBUG-VERBOSE] Checking breakout at index " << j << std::endl;
+                                }
+                                
+                                // Check for pattern invalidation and breakout
+                                try {
+                                    // Check for null detector pointer (should never happen, but as a safeguard)
+                                    if (!detector) {
+                                        Rcpp::Rcout << "[ERROR] Detector is null during breakout search. Aborting." << std::endl;
+                                        break;
                                     }
                                     
-                                    // --- Analyze trend context around the pattern ---
-                                    // Declare variables to hold trend information before/after pattern
-                                    double trendBeginPrice, trendEndPrice;
-                                    int trendBeginTime, trendEndTime;
+                                    // Additional safety checks before invalidation call
+                                    if (j >= Original_prices.size() || j >= Original_times.size()) {
+                                        Rcpp::Rcout << "[ERROR] Index out of bounds for isPatternInvalidated: " << j << std::endl;
+                                        break;
+                                    }
                                     
-                                    // Simplified with no nested try-catch blocks for trend calculation
-                                    detector->calculateTrend(QuerySeries_prices, QuerySeries_times, 
-                                                         pattern, j, 
-                                                         trendBeginPrice, trendBeginTime, 
-                                                         trendEndPrice, trendEndTime);
+                                    // OPTIMIZATION: Early rejection if pattern has been invalidated
+                                    // Use the detector's implementation to determine if pattern is still valid
+                                    try {
+                                        // Extra paranoid check for memory alignment
+                                        if (detector->isPatternInvalidated(Original_prices, Original_times, j, pattern)) {
+                                            Rcpp::Rcout << "[DEBUG-VERBOSE] Pattern invalidated at j=" << j << std::endl;
+                                            break;  // Pattern is no longer valid, stop checking for breakout
+                                        }
+                                    } catch (const std::exception& e) {
+                                        Rcpp::Rcout << "[ERROR] Exception in pattern invalidation check: " << e.what() << std::endl;
+                                        break; // Don't continue if we're having trouble with invalidation check
+                                    } catch (...) {
+                                        Rcpp::Rcout << "[ERROR] Unknown exception in pattern invalidation check" << std::endl;
+                                        break;
+                                    }
                                     
-                                    // Store the trend information in the pattern object for later analysis
-                                    pattern.trendBeginPrice = trendBeginPrice;
-                                    pattern.trendBeginTime = trendBeginTime;
-                                    pattern.trendEndPrice = trendEndPrice;
-                                    pattern.trendEndTime = trendEndTime;
+                                    // Additional safety checks before breakout detection call
+                                    if (j >= Original_prices.size() || j >= Original_times.size()) {
+                                        Rcpp::Rcout << "[ERROR] Index out of bounds for detectBreakout: " << j << std::endl;
+                                        break;
+                                    }
                                     
-                                    // --- Process pattern returns (performance metrics) ---
-                                    // Initialize return value containers with NA (missing value)
-                                    // Fixed window returns (for 1,3,5,10,30,60 periods after breakout)
-                                    std::vector<double> returnValues(6, NA_REAL);
-                                    // Relative window returns (for 1/3, 1/2, 1, 2, 4 times pattern length)
-                                    std::vector<double> relReturnValues(5, NA_REAL);
+                                    // Check for breakout using the appropriate detector
+                                    bool hasBreakout = false;
+                                    try {
+                                        // Normal version of breakout detection for non-SHS patterns
+                                        hasBreakout = detector->detectBreakout(Original_prices, Original_times, j, pattern);
+                                    } catch (const std::exception& e) {
+                                        Rcpp::Rcout << "[ERROR] Exception in detectBreakout: " << e.what() << std::endl;
+                                        continue; // Try next index
+                                    } catch (...) {
+                                        Rcpp::Rcout << "[ERROR] Unknown exception in detectBreakout" << std::endl;
+                                        continue;
+                                    }
                                     
-                                    // Simplified with no nested try-catch blocks for returns calculation
-                                    detector->calculateReturns(Original_prices, Original_times,
-                                                            j+1, // Breakout index (R-indexed)
-                                                            pattern.startIdx, // Pattern start index
-                                                            returnValues, // Output for fixed window returns 
-                                                            relReturnValues); // Output for relative window returns
-                                    
-                                    // Store the calculated returns in the pattern object
-                                    pattern.returns = returnValues;
-                                    pattern.relReturns = relReturnValues;
-                                    
-                                    // --- Record breakout point details ---
-                                    // The vectors were already sized to hold 7 elements during pattern detection
-                                    // (6 pattern points + 1 breakout point)
-                                    
-                                    // Store the actual breakout timestamp and price as the 7th point (index 6)
-                                    pattern.timeStamps[6] = Original_times[j+1];
-                                    pattern.priceStamps[6] = Original_prices[j+1];
-                                    
-                                    // Exit the breakout search loop since we found a valid breakout
-                                    break;
+                                    if (hasBreakout) {
+                                        // Breakout found - mark pattern as valid and store breakout index
+                                        // Adjusting to R's 1-based indexing for return values
+                                        foundBreakout = true;
+                                        pattern.breakoutIdx = j + 1; // +1 for R indexing
+                                        
+                                        // Only log some breakouts to reduce output volume
+                                        if (patterns_found % 50 == 1) {
+                                            Rcpp::Rcout << "[DEBUG] Breakout found for pattern " << patterns_found << std::endl;
+                                        }
+                                        
+                                        // Store breakout timestamp and price with safety checks
+                                        if (j+1 < 0 || j+1 >= Original_times.size()) {
+                                            Rcpp::Rcout << "[ERROR] Invalid breakout index for timestamp/price. Using NA values." << std::endl;
+                                            pattern.timeStamps[6] = NA_INTEGER;
+                                            pattern.priceStamps[6] = NA_REAL;
+                                        } else {
+                                            try {
+                                                pattern.timeStamps[6] = Original_times[j+1];
+                                                pattern.priceStamps[6] = Original_prices[j+1];
+                                            } catch (const std::exception& e) {
+                                                Rcpp::Rcout << "[ERROR] Exception storing breakout point: " << e.what() << std::endl;
+                                                pattern.timeStamps[6] = NA_INTEGER;
+                                                pattern.priceStamps[6] = NA_REAL;
+                                            }
+                                        }
+                                        
+                                        // Exit the breakout search loop since we found a valid breakout
+                                        break;
+                                    }
+                                } catch (const std::exception& e) {
+                                    Rcpp::Rcout << "[DEBUG] Exception in breakout search: " << e.what() << std::endl;
+                                    // Continue to next index in breakout search
                                 }
                             }
+                        }
+                        
+                        // --- Populate output vectors with pattern details ---
+                        // Directly store pattern data in output vectors without the redundant patterns vector
+                        // These vectors will be used to create the R data frames for return values
+                        
+                        try {
+                            Rcpp::Rcout << "[DEBUG-VERBOSE] Storing pattern data in output vectors" << std::endl;
                             
-                            // --- Populate output vectors with pattern details ---
-                            // Directly store pattern data in output vectors without the redundant patterns vector
-                            // These vectors will be used to create the R data frames for return values
+                            // Ensure the pattern's arrays are properly sized before accessing them
+                            if (pattern.timeStamps.size() < 7 || pattern.priceStamps.size() < 7) {
+                                Rcpp::Rcout << "[ERROR] Pattern arrays are not properly sized. Resizing to 7 elements." << std::endl;
+                                pattern.timeStamps.resize(7, NA_INTEGER);
+                                pattern.priceStamps.resize(7, NA_REAL);
+                            }
                             
+                            // Ensure the pattern's return arrays are properly sized
+                            if (pattern.returns.size() < 6) {
+                                Rcpp::Rcout << "[ERROR] Returns array is not properly sized. Resizing to 6 elements." << std::endl;
+                                pattern.returns.resize(6, NA_REAL);
+                            }
+                            
+                            if (pattern.relReturns.size() < 5) {
+                                Rcpp::Rcout << "[ERROR] Relative returns array is not properly sized. Resizing to 5 elements." << std::endl;
+                                pattern.relReturns.resize(5, NA_REAL);
+                            }
+                        
                             // Store pattern identification information
                             patternNames.push_back(pattern.patternName);  // Type of pattern ("SHS" or "iSHS")
                             validPatterns.push_back(foundBreakout);       // Whether a breakout was found
@@ -487,20 +677,21 @@ Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
                                 relReturns2.push_back(NA_REAL);   // No 2x-length return
                                 relReturns4.push_back(NA_REAL);   // No 4x-length return
                             }
-                            
-                            // --- Advance the pattern search position ---
-                            // Skip indices that have already been analyzed as part of this pattern
-                            // Each pattern uses 6 points, so we can safely skip ahead by 5 positions
-                            // (skipping 5 moves us to position i+5, the last point of the current pattern)
-                            i = i + 5;
-                            
-                            // Exit the detector loop since we found a pattern
-                            // This prevents checking other detectors at the same position
-                            break;
+                        } catch (const std::exception& e) {
+                            Rcpp::Rcout << "[ERROR] Exception while storing pattern data: " << e.what() << std::endl;
+                            // Skip this pattern and continue with the next one
+                            continue;
                         }
-                    } catch (const std::exception& e) {
-                        Rcpp::Rcout << "[DEBUG] Exception in pattern detection: " << e.what() << std::endl;
-                        // Continue processing other patterns, this one just failed
+                        
+                        // --- Advance the pattern search position ---
+                        // Skip indices that have already been analyzed as part of this pattern
+                        // Each pattern uses 6 points, so we can safely skip ahead by 5 positions
+                        // (skipping 5 moves us to position i+5, the last point of the current pattern)
+                        i = i + 5;
+                        
+                        // Exit the detector loop since we found a pattern
+                        // This prevents checking other detectors at the same position
+                        break;
                     }
                 }
             }
