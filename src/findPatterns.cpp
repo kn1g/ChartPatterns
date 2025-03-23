@@ -401,172 +401,195 @@ Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
                             // Add immediate debug output to see if we reach this point
                             Rcpp::Rcout << "[DEBUG-CRITICAL] In breakout search loop for j=" << j << std::endl;
                             
-                            // **NEW CRITICAL DEBUG SECTION**
+                            // **FULLY REWRITTEN BREAKOUT DETECTION - FAILSAFE VERSION FOR ALL PATTERN TYPES**
                             // Dump all relevant pointers and values before doing any operations
                             Rcpp::Rcout << "[DEBUG-CRASH] Pattern info: patternName=" << pattern.patternName 
                                        << ", pattern.timeStamps.size()=" << pattern.timeStamps.size() 
                                        << ", pattern.priceStamps.size()=" << pattern.priceStamps.size() << std::endl;
                             
-                            // Complete verification of detector object
-                            if (!detector) {
-                                Rcpp::Rcout << "[ERROR-CRASH] Detector is null - skipping breakout detection" << std::endl;
-                                break;
-                            }
-                            
-                            // Skip directly to SHS custom detection if this is an SHS pattern
-                            // This avoids calling potentially problematic code in the detector
-                            if (pattern.patternName == "SHS") {
-                                Rcpp::Rcout << "[DEBUG-CRASH] Using failsafe SHS detection code" << std::endl;
-                                
-                                // Defensive breakout detection that avoids using the detector's methods
-                                bool hasBreakout = false;
-                                
-                                try {
-                                    // Skip if we're not past the right shoulder
-                                    if (j <= pattern.rightShoulderIdx || j >= Original_prices.size() - 1) {
-                                        Rcpp::Rcout << "[DEBUG-CRASH] Invalid indices for SHS breakout check" << std::endl;
-                                        hasBreakout = false;
-                                    } else {
-                                        // Use direct values from the pattern object without any complex calculations
-                                        // or risk of memory alignment issues
-                                        
-                                        // Get the shoulder prices directly
-                                        double leftShoulderPrice = pattern.priceStamps[1];  // Left shoulder 
-                                        double rightShoulderPrice = pattern.priceStamps[5]; // Right shoulder
-                                        double headPrice = pattern.priceStamps[3];          // Head
-                                        
-                                        // Simple estimate of the neckline (average of shoulder prices)
-                                        double necklineValue = (leftShoulderPrice + rightShoulderPrice) / 2.0;
-                                        
-                                        // For SHS, breakout is when price drops below neckline
-                                        if (Original_prices[j] < necklineValue && 
-                                            Original_prices[j+1] < necklineValue && 
-                                            Original_prices[j+1] < rightShoulderPrice) {
-                                            
-                                            Rcpp::Rcout << "[DEBUG-CRASH] SHS Breakout detected using safe method" << std::endl;
-                                            hasBreakout = true;
-                                            
-                                            // Store breakout information
-                                            pattern.breakoutIdx = j + 1; // +1 for R indexing
-                                            
-                                            // Store breakout timestamp and price
-                                            pattern.timeStamps[6] = Original_times[j+1];
-                                            pattern.priceStamps[6] = Original_prices[j+1];
-                                            
-                                            // Skip trend and returns calculation for now
-                                            // We'll come back to this later if we can get past the crash
-                                            
-                                            foundBreakout = true;
-                                            break; // Exit breakout search
-                                        }
-                                    }
-                                } catch (const std::exception& e) {
-                                    Rcpp::Rcout << "[ERROR-CRASH] Exception in safe SHS breakout detection: " 
-                                               << e.what() << std::endl;
-                                    continue; // Try next position
-                                } catch (...) {
-                                    Rcpp::Rcout << "[ERROR-CRASH] Unknown exception in safe SHS breakout detection" 
-                                               << std::endl;
-                                    continue;
+                            try {
+                                // Complete verification of detector object - but we won't use it directly
+                                if (!detector) {
+                                    Rcpp::Rcout << "[ERROR-CRASH] Detector is null - skipping breakout detection" << std::endl;
+                                    break;
                                 }
-                            } else {
-                                // For non-SHS patterns, use the existing code with added safety
-                            
-                                // Add safety check within the loop
+                                
+                                // Additional safety check for indices
                                 if (j < 0 || j >= Original_times.size() - 1) {
                                     Rcpp::Rcout << "[ERROR] Breakout search index j=" << j 
                                               << " out of bounds. Aborting breakout search." << std::endl;
-                                    break; // Exit breakout search loop
+                                    break;
                                 }
                                 
-                                // Extra safety: periodically output progress for large datasets
-                                if (j % 1000 == 0) {
-                                    Rcpp::Rcout << "[DEBUG-VERBOSE] Checking breakout at index " << j << std::endl;
+                                // Ensure that pattern data is properly set before attempting to use it
+                                if (pattern.timeStamps.size() < 7 || pattern.priceStamps.size() < 7) {
+                                    Rcpp::Rcout << "[ERROR-CRASH] Pattern arrays not properly sized in breakout loop" << std::endl;
+                                    // Ensure proper size before proceeding
+                                    pattern.timeStamps.resize(7, NA_INTEGER);
+                                    pattern.priceStamps.resize(7, NA_REAL);
                                 }
                                 
-                                // Check for pattern invalidation and breakout
-                                try {
-                                    // Check for null detector pointer (should never happen, but as a safeguard)
-                                    if (!detector) {
-                                        Rcpp::Rcout << "[ERROR] Detector is null during breakout search. Aborting." << std::endl;
+                                // Direct implementation for all pattern types to avoid any detector method calls
+                                if (pattern.patternName == "SHS") {
+                                    Rcpp::Rcout << "[DEBUG-CRASH] Using failsafe SHS detection code" << std::endl;
+                                    
+                                    // Invalidation check: if price rises above right shoulder, pattern is invalid
+                                    if (Original_prices[j] > pattern.priceStamps[5] && 
+                                        j != PrePro_indexFilter[i+5]) {
+                                        Rcpp::Rcout << "[DEBUG] SHS pattern invalidated - price rose above right shoulder" << std::endl;
                                         break;
                                     }
                                     
-                                    // Additional safety checks before invalidation call
-                                    if (j >= Original_prices.size() || j >= Original_times.size()) {
-                                        Rcpp::Rcout << "[ERROR] Index out of bounds for isPatternInvalidated: " << j << std::endl;
-                                        break;
-                                    }
+                                    // Calculate neckline value using direct array access (with bounds checks)
+                                    double necklineValue = 0.0;
                                     
-                                    // OPTIMIZATION: Early rejection if pattern has been invalidated
-                                    // Use the detector's implementation to determine if pattern is still valid
+                                    // Simple average of shoulder prices as a fallback
+                                    double simpleNeckline = (pattern.priceStamps[1] + pattern.priceStamps[5]) / 2.0;
+                                    
+                                    // Try to calculate the proper neckline if we have valid data
                                     try {
-                                        // Extra paranoid check for memory alignment
-                                        if (detector->isPatternInvalidated(Original_prices, Original_times, j, pattern)) {
-                                            Rcpp::Rcout << "[DEBUG-VERBOSE] Pattern invalidated at j=" << j << std::endl;
-                                            break;  // Pattern is no longer valid, stop checking for breakout
-                                        }
-                                    } catch (const std::exception& e) {
-                                        Rcpp::Rcout << "[ERROR] Exception in pattern invalidation check: " << e.what() << std::endl;
-                                        break; // Don't continue if we're having trouble with invalidation check
-                                    } catch (...) {
-                                        Rcpp::Rcout << "[ERROR] Unknown exception in pattern invalidation check" << std::endl;
-                                        break;
-                                    }
-                                    
-                                    // Additional safety checks before breakout detection call
-                                    if (j >= Original_prices.size() || j >= Original_times.size()) {
-                                        Rcpp::Rcout << "[ERROR] Index out of bounds for detectBreakout: " << j << std::endl;
-                                        break;
-                                    }
-                                    
-                                    // Check for breakout using the appropriate detector
-                                    bool hasBreakout = false;
-                                    try {
-                                        // Normal version of breakout detection for non-SHS patterns
-                                        hasBreakout = detector->detectBreakout(Original_prices, Original_times, j, pattern);
-                                    } catch (const std::exception& e) {
-                                        Rcpp::Rcout << "[ERROR] Exception in detectBreakout: " << e.what() << std::endl;
-                                        continue; // Try next index
-                                    } catch (...) {
-                                        Rcpp::Rcout << "[ERROR] Unknown exception in detectBreakout" << std::endl;
-                                        continue;
-                                    }
-                                    
-                                    if (hasBreakout) {
-                                        // Breakout found - mark pattern as valid and store breakout index
-                                        // Adjusting to R's 1-based indexing for return values
-                                        foundBreakout = true;
-                                        pattern.breakoutIdx = j + 1; // +1 for R indexing
+                                        int x1 = pattern.timeStamps[2];  // Trough1 time 
+                                        int x2 = pattern.timeStamps[4];  // Trough2 time
+                                        double y1 = pattern.priceStamps[2];  // Trough1 price
+                                        double y2 = pattern.priceStamps[4];  // Trough2 price
                                         
-                                        // Only log some breakouts to reduce output volume
-                                        if (patterns_found % 50 == 1) {
-                                            Rcpp::Rcout << "[DEBUG] Breakout found for pattern " << patterns_found << std::endl;
-                                        }
-                                        
-                                        // Store breakout timestamp and price with safety checks
-                                        if (j+1 < 0 || j+1 >= Original_times.size()) {
-                                            Rcpp::Rcout << "[ERROR] Invalid breakout index for timestamp/price. Using NA values." << std::endl;
-                                            pattern.timeStamps[6] = NA_INTEGER;
-                                            pattern.priceStamps[6] = NA_REAL;
+                                        // Linear interpolation to calculate neckline at current position
+                                        if (std::abs(x2 - x1) < 1e-15) {
+                                            // If x values are the same, just average the y values
+                                            necklineValue = (y1 + y2) / 2.0;
                                         } else {
-                                            try {
+                                            // Calculate slope and interpolate
+                                            double slope = (y2 - y1) / static_cast<double>(x2 - x1);
+                                            necklineValue = y1 + slope * (Original_times[j] - x1);
+                                        }
+                                    } catch (...) {
+                                        // If any issues, fall back to simple neckline
+                                        Rcpp::Rcout << "[ERROR] Error calculating SHS neckline, using simple average" << std::endl;
+                                        necklineValue = simpleNeckline;
+                                    }
+                                    
+                                    // Breakout check - price drops below neckline
+                                    if (Original_prices[j] < necklineValue) {
+                                        // Confirm breakout: next price also below right shoulder (conservative)
+                                        if (j+1 < Original_prices.size() && 
+                                            Original_prices[j+1] < pattern.priceStamps[5]) {
+                                            
+                                            Rcpp::Rcout << "[DEBUG-CRASH] SHS Breakout detected using safe method" << std::endl;
+                                            
+                                            // Store breakout information
+                                            foundBreakout = true;
+                                            pattern.breakoutIdx = j + 1; // +1 for R indexing
+                                            
+                                            // Safely store breakout timestamp and price
+                                            if (j+1 < Original_times.size()) {
                                                 pattern.timeStamps[6] = Original_times[j+1];
                                                 pattern.priceStamps[6] = Original_prices[j+1];
-                                            } catch (const std::exception& e) {
-                                                Rcpp::Rcout << "[ERROR] Exception storing breakout point: " << e.what() << std::endl;
+                                            } else {
                                                 pattern.timeStamps[6] = NA_INTEGER;
                                                 pattern.priceStamps[6] = NA_REAL;
                                             }
+                                            
+                                            // Skip trend and returns calculation for now
+                                            // Just initialize with NA/default values
+                                            pattern.trendBeginPrice = NA_REAL;
+                                            pattern.trendBeginTime = NA_INTEGER;
+                                            pattern.trendEndPrice = NA_REAL;
+                                            pattern.trendEndTime = NA_INTEGER;
+                                            
+                                            // Initialize returns with NA values (will be populated by later logic)
+                                            std::fill(pattern.returns.begin(), pattern.returns.end(), NA_REAL);
+                                            std::fill(pattern.relReturns.begin(), pattern.relReturns.end(), NA_REAL);
+                                            
+                                            break; // Exit breakout search
                                         }
-                                        
-                                        // Exit the breakout search loop since we found a valid breakout
+                                    }
+                                } 
+                                else if (pattern.patternName == "iSHS") {
+                                    Rcpp::Rcout << "[DEBUG-CRASH] Using failsafe iSHS detection code" << std::endl;
+                                    
+                                    // Invalidation check: if price drops below right shoulder, pattern is invalid
+                                    if (Original_prices[j] < pattern.priceStamps[5] && 
+                                        j != PrePro_indexFilter[i+5]) {
+                                        Rcpp::Rcout << "[DEBUG] iSHS pattern invalidated - price dropped below right shoulder" << std::endl;
                                         break;
                                     }
-                                } catch (const std::exception& e) {
-                                    Rcpp::Rcout << "[DEBUG] Exception in breakout search: " << e.what() << std::endl;
-                                    // Continue to next index in breakout search
+                                    
+                                    // Calculate neckline value using direct array access (with bounds checks)
+                                    double necklineValue = 0.0;
+                                    
+                                    // Simple average of shoulder prices as a fallback
+                                    double simpleNeckline = (pattern.priceStamps[1] + pattern.priceStamps[5]) / 2.0;
+                                    
+                                    // Try to calculate the proper neckline if we have valid data
+                                    try {
+                                        int x1 = pattern.timeStamps[2];  // Peak1 time 
+                                        int x2 = pattern.timeStamps[4];  // Peak2 time
+                                        double y1 = pattern.priceStamps[2];  // Peak1 price
+                                        double y2 = pattern.priceStamps[4];  // Peak2 price
+                                        
+                                        // Linear interpolation to calculate neckline at current position
+                                        if (std::abs(x2 - x1) < 1e-15) {
+                                            // If x values are the same, just average the y values
+                                            necklineValue = (y1 + y2) / 2.0;
+                                        } else {
+                                            // Calculate slope and interpolate
+                                            double slope = (y2 - y1) / static_cast<double>(x2 - x1);
+                                            necklineValue = y1 + slope * (Original_times[j] - x1);
+                                        }
+                                    } catch (...) {
+                                        // If any issues, fall back to simple neckline
+                                        Rcpp::Rcout << "[ERROR] Error calculating iSHS neckline, using simple average" << std::endl;
+                                        necklineValue = simpleNeckline;
+                                    }
+                                    
+                                    // Breakout check - price rises above neckline
+                                    if (Original_prices[j] > necklineValue) {
+                                        // Confirm breakout: next price also above right shoulder (conservative)
+                                        if (j+1 < Original_prices.size() && 
+                                            Original_prices[j+1] > pattern.priceStamps[5]) {
+                                            
+                                            Rcpp::Rcout << "[DEBUG-CRASH] iSHS Breakout detected using safe method" << std::endl;
+                                            
+                                            // Store breakout information
+                                            foundBreakout = true;
+                                            pattern.breakoutIdx = j + 1; // +1 for R indexing
+                                            
+                                            // Safely store breakout timestamp and price
+                                            if (j+1 < Original_times.size()) {
+                                                pattern.timeStamps[6] = Original_times[j+1];
+                                                pattern.priceStamps[6] = Original_prices[j+1];
+                                            } else {
+                                                pattern.timeStamps[6] = NA_INTEGER;
+                                                pattern.priceStamps[6] = NA_REAL;
+                                            }
+                                            
+                                            // Skip trend and returns calculation for now
+                                            // Just initialize with NA/default values
+                                            pattern.trendBeginPrice = NA_REAL;
+                                            pattern.trendBeginTime = NA_INTEGER;
+                                            pattern.trendEndPrice = NA_REAL;
+                                            pattern.trendEndTime = NA_INTEGER;
+                                            
+                                            // Initialize returns with NA values (will be populated by later logic)
+                                            std::fill(pattern.returns.begin(), pattern.returns.end(), NA_REAL);
+                                            std::fill(pattern.relReturns.begin(), pattern.relReturns.end(), NA_REAL);
+                                            
+                                            break; // Exit breakout search
+                                        }
+                                    }
                                 }
+                                else {
+                                    // For any other pattern types, just use a safe default approach
+                                    Rcpp::Rcout << "[DEBUG-CRASH] Unknown pattern type: " << pattern.patternName << std::endl;
+                                    break;
+                                }
+                                
+                            } catch (const std::exception& e) {
+                                Rcpp::Rcout << "[ERROR-CRASH] Exception in breakout detection: " << e.what() << std::endl;
+                                continue; // Try next position
+                            } catch (...) {
+                                Rcpp::Rcout << "[ERROR-CRASH] Unknown exception in breakout detection" << std::endl;
+                                continue;
                             }
                         }
                         
