@@ -70,19 +70,24 @@ Rcpp::DataFrame FastFindII(IntegerVector PrePro_indexFilter,
   std::vector<int> AnzahlAufsteigenderHochpunkteBefore;
   int AnzahlAbsteigenderHochpunkteAfterValue;
   std::vector<int> AnzahlAbsteigenderHochpunkteAfter;
-  int AnzahlAbsteigenderTiefpunkteAfterValue;
-  std::vector<int> AnzahlAbsteigenderTiefpunkteAfter;
+  // int AnzahlAbsteigenderTiefpunkteAfterValue;
+  // std::vector<int> AnzahlAbsteigenderTiefpunkteAfter;
   int AnzahlAbsteigenderTiefpunkteBeforeValue;
   std::vector<int> AnzahlAbsteigenderTiefpunkteBefore;
   int AnzahlAbsteigenderHochpunkteBeforeValue;
   std::vector<int> AnzahlAbsteigenderHochpunkteBefore;
-  int AnzahlAufsteigenderHochpunkteAfterValue;
-  std::vector<int> AnzahlAufsteigenderHochpunkteAfter;
+  // int AnzahlAufsteigenderHochpunkteAfterValue;
+  // std::vector<int> AnzahlAufsteigenderHochpunkteAfter;
   int AnzahlAufsteigenderTiefpunkteAfterValue;
   std::vector<int> AnzahlAufsteigenderTiefpunkteAfter;
   
   // main loop thorughFindShoulderHeadShoulder
   for(int i=0; i < (QuerySeries_prices.size() - 6); ++i){
+    
+    // FIX 1: Ensure i+5 is within bounds for PrePro_indexFilter access
+    if(i+5 >= PrePro_indexFilter.size()) {
+      break; // Exit loop if we can't safely access i+5
+    }
     
     // This part checks the positions of the 7 Points
     if(QuerySeries_prices[i  ] < QuerySeries_prices[i+1] && // ensures that it is a low (this is done before)
@@ -93,8 +98,18 @@ Rcpp::DataFrame FastFindII(IntegerVector PrePro_indexFilter,
        QuerySeries_prices[i+5] > linearInterpolation(QuerySeries_times[i+2],QuerySeries_times[i+4],QuerySeries_prices[i+2],QuerySeries_prices[i+4],QuerySeries_times[i+5]) && // Right Shoulder above Neckline
        QuerySeries_prices[i+1] > linearInterpolation(QuerySeries_times[i+2],QuerySeries_times[i+4],QuerySeries_prices[i+2],QuerySeries_prices[i+4],QuerySeries_times[i+1])    // Left Shoulder above Neckline
     ){
+      // FIX 2: Ensure PrePro_indexFilter[i+5] is valid before using it
+      if(PrePro_indexFilter[i+5] >= Original_times.size() - 1) {
+        continue; // Skip this pattern if we can't safely check for breakout
+      }
+      
       // loop over data to find when the neckline is crossed = breakout
-      for(int j= PrePro_indexFilter[i+5]; j < Original_times.size(); ++j){
+      for(int j = PrePro_indexFilter[i+5]; j < Original_times.size()-1; ++j){
+        
+        // FIX 3: Verify j is valid for Original_times access
+        if(j < 0 || j >= Original_times.size()) {
+          break; // Exit loop if j is out of bounds
+        }
         
         // Calculate interpolated neckline
         neckline_linearInterpolatedPointAtj = linearInterpolation(QuerySeries_times[i+2],QuerySeries_times[i+4],QuerySeries_prices[i+2],QuerySeries_prices[i+4], Original_times[j]);
@@ -102,8 +117,10 @@ Rcpp::DataFrame FastFindII(IntegerVector PrePro_indexFilter,
         
         if(Original_prices[j] < neckline_linearInterpolatedPointAtj){
           
-          Rcout << "lineare Interpolatoion: " << neckline_linearInterpolatedPointAtj << std::endl;
-          Rcout << "Ori Prices: " << Original_prices[j] << std::endl;
+          // FIX 4: Ensure j+1 is within bounds of Original_prices
+          if(j+1 >= Original_prices.size()) {
+            break; // Exit loop if we can't safely check j+1
+          }
           
           // now the pattern is valid. But we only buy, if the next price (buyprice) is still above the right shoulder (limitbuy) 
           // check if buyprice is above right shoulder - no buy happens - only buy if under right shoulder
@@ -203,8 +220,9 @@ Rcpp::DataFrame FastFindII(IntegerVector PrePro_indexFilter,
             
             // Abfallende Hochpunkte danach
             AnzahlAbsteigenderHochpunkteAfterValue = 0;
-            for(int forward = i+5; forward > 2; forward= forward+2){
-              if(QuerySeries_prices[forward] > QuerySeries_prices[forward+2]){
+            for(int forward = i+4; forward > 2; forward = forward+2){
+              if(forward+2 < QuerySeries_prices.size() && // Ensure safe access to forward+2
+                 QuerySeries_prices[forward] > QuerySeries_prices[forward+2]){
                 AnzahlAbsteigenderHochpunkteAfterValue = AnzahlAbsteigenderHochpunkteAfterValue +1;
               }else{
                 break;
@@ -213,31 +231,10 @@ Rcpp::DataFrame FastFindII(IntegerVector PrePro_indexFilter,
             AnzahlAbsteigenderHochpunkteAfter.push_back(AnzahlAbsteigenderHochpunkteAfterValue);
             
             // Aufsteigende Hochpunkte danach
-            AnzahlAufsteigenderHochpunkteAfterValue = 0;
-            for(int forward = i+5; forward > 2; forward= forward+2){
-              if(QuerySeries_prices[forward] < QuerySeries_prices[forward+2]){
-                AnzahlAufsteigenderHochpunkteAfterValue = AnzahlAufsteigenderHochpunkteAfterValue +1;
-              }else{
-                break;
-              }
-            } // endfor
-            AnzahlAufsteigenderHochpunkteAfter.push_back(AnzahlAufsteigenderHochpunkteAfterValue);
-            
-            // Abfallende Tiefpunkte danach
-            AnzahlAbsteigenderTiefpunkteAfterValue = 0;
-            for(int forward = i+4; forward > 2; forward= forward+2){
-              if(QuerySeries_prices[forward] > QuerySeries_prices[forward+2]){
-                AnzahlAbsteigenderTiefpunkteAfterValue = AnzahlAbsteigenderTiefpunkteAfterValue +1;
-              }else{
-                break;
-              }
-            } // endfor
-            AnzahlAbsteigenderTiefpunkteAfter.push_back(AnzahlAbsteigenderTiefpunkteAfterValue);
-            
-            // Aufsteigende Tiefpunkte danach
             AnzahlAufsteigenderTiefpunkteAfterValue = 0;
-            for(int forward = i+4; forward > 2; forward= forward+2){
-              if(QuerySeries_prices[forward] < QuerySeries_prices[forward+2]){
+            for(int forward = i+4; forward > 2; forward = forward+2){
+              if(forward+2 < QuerySeries_prices.size() && // Ensure safe access to forward+2
+                 QuerySeries_prices[forward] < QuerySeries_prices[forward+2]){
                 AnzahlAufsteigenderTiefpunkteAfterValue = AnzahlAufsteigenderTiefpunkteAfterValue +1;
               }else{
                 break;
@@ -249,14 +246,17 @@ Rcpp::DataFrame FastFindII(IntegerVector PrePro_indexFilter,
             break;
           } //end if - pattern has been detected
         } // if neckline is crossed
+        
+        // FIX 7: Add j != PrePro_indexFilter[i+5] check to match FastFind_ChaosRegin.cpp
         // if the original Prices rise above the right shoulder we can stop. The Pattern would not be valid
-        if(Original_prices[j] > QuerySeries_prices[i+5]){
+        if(Original_prices[j] > QuerySeries_prices[i+5] && j != PrePro_indexFilter[i+5]){
           break;
         }
       } // end for loop to check if neckline is crossed
       
     } // end if points satisfy the rough condition
     
+    // FIX 8: The same boundary checks for iSHS pattern detection
     // This part checks the positions of the 7 Points
     if(QuerySeries_prices[i  ] > QuerySeries_prices[i+1] && // ensures that it is a low (this is done before)
        QuerySeries_prices[i  ] > QuerySeries_prices[i+2] && // patterndefinitions from here on
@@ -266,13 +266,29 @@ Rcpp::DataFrame FastFindII(IntegerVector PrePro_indexFilter,
        QuerySeries_prices[i+5] < linearInterpolation(QuerySeries_times[i+2],QuerySeries_times[i+4],QuerySeries_prices[i+2],QuerySeries_prices[i+4],QuerySeries_times[i+5]) && // Right Shoulder above Neckline
        QuerySeries_prices[i+1] < linearInterpolation(QuerySeries_times[i+2],QuerySeries_times[i+4],QuerySeries_prices[i+2],QuerySeries_prices[i+4],QuerySeries_times[i+1])    // Left Shoulder above Neckline
     ){
+      // FIX 9: Same boundary check as in SHS case
+      if(PrePro_indexFilter[i+5] >= Original_times.size() - 1) {
+        continue; // Skip this pattern if we can't safely check for breakout
+      }
+      
       // loop over data to find when the neckline is crossed = breakout
-      for(int j= PrePro_indexFilter[i+5]; j < Original_times.size(); ++j){
+      for(int j= PrePro_indexFilter[i+5]; j < Original_times.size()-1; ++j){
+        
+        // FIX 10: Verify j is valid for Original_times access, same as SHS case
+        if(j < 0 || j >= Original_times.size()) {
+          break; // Exit loop if j is out of bounds
+        }
         
         // Calculate interpolated neckline
         neckline_linearInterpolatedPointAtj = linearInterpolation(QuerySeries_times[i+2],QuerySeries_times[i+4],QuerySeries_prices[i+2],QuerySeries_prices[i+4], Original_times[j]);
+        
         // check if Neckline is crossed
         if(Original_prices[j] > neckline_linearInterpolatedPointAtj){
+          
+          // FIX 11: Ensure j+1 is within bounds of Original_prices for iSHS
+          if(j+1 >= Original_prices.size()) {
+            break; // Exit loop if we can't safely check j+1
+          }
           
           // check if buyprice is under right shoulder - no buy happens - only buy if above right shoulder // Groesser Zeichen geandert
           if(Original_prices[j+1] > QuerySeries_prices[i+5]){
@@ -362,8 +378,9 @@ Rcpp::DataFrame FastFindII(IntegerVector PrePro_indexFilter,
             
             // Abfallende Hochpunkte danach
             AnzahlAbsteigenderHochpunkteAfterValue = 0;
-            for(int forward = i+5; forward > 2; forward= forward+2){
-              if(QuerySeries_prices[forward] > QuerySeries_prices[forward+2]){
+            for(int forward = i+4; forward > 2; forward = forward+2){
+              if(forward+2 < QuerySeries_prices.size() && // Ensure safe access to forward+2
+                 QuerySeries_prices[forward] > QuerySeries_prices[forward+2]){
                 AnzahlAbsteigenderHochpunkteAfterValue = AnzahlAbsteigenderHochpunkteAfterValue +1;
               }else{
                 break;
@@ -372,31 +389,10 @@ Rcpp::DataFrame FastFindII(IntegerVector PrePro_indexFilter,
             AnzahlAbsteigenderHochpunkteAfter.push_back(AnzahlAbsteigenderHochpunkteAfterValue);
             
             // Aufsteigende Hochpunkte danach
-            AnzahlAufsteigenderHochpunkteAfterValue = 0;
-            for(int forward = i+5; forward > 2; forward= forward+2){
-              if(QuerySeries_prices[forward] < QuerySeries_prices[forward+2]){
-                AnzahlAufsteigenderHochpunkteAfterValue = AnzahlAufsteigenderHochpunkteAfterValue +1;
-              }else{
-                break;
-              }
-            } // endfor
-            AnzahlAufsteigenderHochpunkteAfter.push_back(AnzahlAufsteigenderHochpunkteAfterValue);
-            
-            // Abfallende Tiefpunkte danach
-            AnzahlAbsteigenderTiefpunkteAfterValue = 0;
-            for(int forward = i+4; forward > 2; forward= forward+2){
-              if(QuerySeries_prices[forward] > QuerySeries_prices[forward+2]){
-                AnzahlAbsteigenderTiefpunkteAfterValue = AnzahlAbsteigenderTiefpunkteAfterValue +1;
-              }else{
-                break;
-              }
-            } // endfor
-            AnzahlAbsteigenderTiefpunkteAfter.push_back(AnzahlAbsteigenderTiefpunkteAfterValue);
-            
-            // Aufsteigende Tiefpunkte danach
             AnzahlAufsteigenderTiefpunkteAfterValue = 0;
-            for(int forward = i+4; forward > 2; forward= forward+2){
-              if(QuerySeries_prices[forward] < QuerySeries_prices[forward+2]){
+            for(int forward = i+4; forward > 2; forward = forward+2){
+              if(forward+2 < QuerySeries_prices.size() && // Ensure safe access to forward+2
+                 QuerySeries_prices[forward] < QuerySeries_prices[forward+2]){
                 AnzahlAufsteigenderTiefpunkteAfterValue = AnzahlAufsteigenderTiefpunkteAfterValue +1;
               }else{
                 break;
@@ -408,8 +404,10 @@ Rcpp::DataFrame FastFindII(IntegerVector PrePro_indexFilter,
             break;
           } //end if - pattern has been detected
         } // if neckline is crossed
+        
+        // FIX 12: Add j != PrePro_indexFilter[i+5] check to match FastFind_ChaosRegin.cpp
         // if the original Prices fall below the right shoulder we can stop. The Pattern would not be valid
-        if(Original_prices[j] < QuerySeries_prices[i+5]){
+        if(Original_prices[j] < QuerySeries_prices[i+5] && j != PrePro_indexFilter[i+5]){
           break;
         }
       } // end for loop to check if neckline is crossed
@@ -417,6 +415,44 @@ Rcpp::DataFrame FastFindII(IntegerVector PrePro_indexFilter,
     } // end if points satisfy the rough condition
     
   } // end main for loop which iterates over all datapoints
+  
+  // print the variables to detect length mismatches
+  Rcpp::Rcout << "PatternName: " << PatternName.size() << std::endl;
+  Rcpp::Rcout << "PatternGroup: " << PatternGroup.size() << std::endl;
+  Rcpp::Rcout << "patternLength: " << patternLength.size() << std::endl;
+  Rcpp::Rcout << "firstIndexPrePro: " << firstIndexPrePro.size() << std::endl;
+  Rcpp::Rcout << "firstindexOrigi: " << firstindexOrigi.size() << std::endl;
+  Rcpp::Rcout << "breakoutIndex: " << breakoutIndex.size() << std::endl;
+  Rcpp::Rcout << "timeStamp: " << timeStamp.size() << std::endl;
+  Rcpp::Rcout << "priceStamp: " << priceStamp.size() << std::endl;
+  Rcpp::Rcout << "patternLengthInDays: " << patternLengthInDays.size() << std::endl;
+  Rcpp::Rcout << "slopeNeckline: " << slopeNeckline.size() << std::endl;
+  Rcpp::Rcout << "slopePIP_1: " << slopePIP_1.size() << std::endl;
+  Rcpp::Rcout << "slopePIP_2: " << slopePIP_2.size() << std::endl;
+  Rcpp::Rcout << "slopePIP_3: " << slopePIP_3.size() << std::endl;
+  Rcpp::Rcout << "slopePIP_4: " << slopePIP_4.size() << std::endl;
+  Rcpp::Rcout << "slopePIP_5: " << slopePIP_5.size() << std::endl;
+  Rcpp::Rcout << "slopePIP_6: " << slopePIP_6.size() << std::endl;
+  Rcpp::Rcout << "slopePIP_7: " << slopePIP_7.size() << std::endl;
+  Rcpp::Rcout << "length_Neckline: " << length_Neckline.size() << std::endl;
+  Rcpp::Rcout << "length_1: " << length_1.size() << std::endl;
+  Rcpp::Rcout << "length_2: " << length_2.size() << std::endl;
+  Rcpp::Rcout << "length_3: " << length_3.size() << std::endl;
+  Rcpp::Rcout << "length_4: " << length_4.size() << std::endl;
+  Rcpp::Rcout << "length_5: " << length_5.size() << std::endl;
+  Rcpp::Rcout << "length_6: " << length_6.size() << std::endl;
+  Rcpp::Rcout << "length_7: " << length_7.size() << std::endl;
+  Rcpp::Rcout << "AnzahlAufsteigenderTiefpunkteBefore: " << AnzahlAufsteigenderTiefpunkteBefore.size() << std::endl;
+  Rcpp::Rcout << "AnzahlAufsteigenderHochpunkteBefore: " << AnzahlAufsteigenderHochpunkteBefore.size() << std::endl;
+  Rcpp::Rcout << "AnzahlAbsteigenderTiefpunkteBefore: " << AnzahlAbsteigenderTiefpunkteBefore.size() << std::endl;
+  Rcpp::Rcout << "AnzahlAbsteigenderHochpunkteBefore: " << AnzahlAbsteigenderHochpunkteBefore.size() << std::endl;
+  Rcpp::Rcout << "AnzahlAbsteigenderHochpunkteAfter: " << AnzahlAbsteigenderHochpunkteAfter.size() << std::endl;
+  Rcpp::Rcout << "AnzahlAufsteigenderTiefpunkteAfter: " << AnzahlAufsteigenderTiefpunkteAfter.size() << std::endl;
+  // Rcpp::Rcout << "AnzahlAufsteigenderHochpunkteAfter: " << AnzahlAufsteigenderHochpunkteAfter.size() << std::endl;
+  // Rcpp::Rcout << "AnzahlAbsteigenderTiefpunkteAfter: " << AnzahlAbsteigenderTiefpunkteAfter.size() << std::endl;
+
+  
+  
   
   
   // RCPP can not handle data.frames with more  than 20 columns. We need to split the information and then put it together in a LIST in the end
@@ -456,9 +492,9 @@ Rcpp::DataFrame FastFindII(IntegerVector PrePro_indexFilter,
     Rcpp::Named("AnzahlAbsteigenderTiefpunkteBefore")  = AnzahlAbsteigenderTiefpunkteBefore,
     Rcpp::Named("AnzahlAbsteigenderHochpunkteBefore")  = AnzahlAbsteigenderHochpunkteBefore,
     Rcpp::Named("AnzahlAbsteigenderHochpunkteAfter")   = AnzahlAbsteigenderHochpunkteAfter,
-    Rcpp::Named("AnzahlAbsteigenderTiefpunkteAfter")   = AnzahlAbsteigenderTiefpunkteAfter,
-    Rcpp::Named("AnzahlAufsteigenderTiefpunkteAfter")  = AnzahlAufsteigenderTiefpunkteAfter,
-    Rcpp::Named("AnzahlAufsteigenderHochpunkteAfter")  = AnzahlAufsteigenderHochpunkteAfter
+    // Rcpp::Named("AnzahlAbsteigenderTiefpunkteAfter")   = AnzahlAbsteigenderTiefpunkteAfter
+    Rcpp::Named("AnzahlAufsteigenderTiefpunkteAfter")  = AnzahlAufsteigenderTiefpunkteAfter
+    // Rcpp::Named("AnzahlAufsteigenderHochpunkteAfter")  = AnzahlAufsteigenderHochpunkteAfter
   
   );
   

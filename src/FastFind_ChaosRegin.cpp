@@ -20,6 +20,12 @@
                           NumericVector Original_times,
                           NumericVector Original_prices
  ){
+
+    // Controls whether the index starts at zero
+  if(PrePro_indexFilter[0] != 0){
+    Function warning("warning");
+    warning("PrePro Vector indices does not start at Zero.");
+  }
    
    // Sucht PIPs im Originaldatenstz
    NumericVector QuerySeries_times  = Original_times[PrePro_indexFilter];
@@ -122,7 +128,7 @@
          
          // if the original Prices rise above the right shoulder we can stop. The Pattern would not be valid
          if(Original_prices[j] > QuerySeries_prices[i+5] &&
-            j != PrePro_indexFilter[i+5]){
+            j != PrePro_indexFilter[i+5]){ // audit here is a difference!!!
            break;
          }
          
@@ -156,7 +162,7 @@
                } // endfor
              }
              
-             // Wir schauen bei SHS nur auf die abfallende Hochpunkte danach
+             // Wir schauen bei iSHS nur auf die abfallende Hochpunkte danach
              if(i+5 < (QuerySeries_prices.size()-2)){
                for(int forward = i+5; forward < (QuerySeries_prices.size()-2); forward = forward+2){
                  if(QuerySeries_prices[forward] > QuerySeries_prices[forward+2]){
@@ -364,7 +370,6 @@
              
              break;
            } // buy price shoulder check
-           
          } // if neckline is crossed
        } // loop over data when neckline corssed 
        

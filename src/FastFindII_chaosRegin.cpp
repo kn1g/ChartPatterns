@@ -6,6 +6,12 @@ List FastFindII_chaosRegin(IntegerVector PrePro_indexFilter,
               NumericVector Original_times,
               NumericVector Original_prices
 ){
+
+    // Controls whether the index starts at zero
+  if(PrePro_indexFilter[0] != 0){
+    Function warning("warning");
+    warning("PrePro Vector indices does not start at Zero.");
+  }
   
   NumericVector QuerySeries_times  = Original_times[PrePro_indexFilter];
   NumericVector QuerySeries_prices = Original_prices[PrePro_indexFilter];
@@ -79,18 +85,18 @@ List FastFindII_chaosRegin(IntegerVector PrePro_indexFilter,
     // Check if 7 points form a potential SHS
     bool candidateSHS = (
       QuerySeries_prices[i]   < QuerySeries_prices[i+1] &&
-        QuerySeries_prices[i]   < QuerySeries_prices[i+2] &&
-        QuerySeries_prices[i+1] < QuerySeries_prices[i+3] &&
-        QuerySeries_prices[i+5] < QuerySeries_prices[i+3] &&
-        QuerySeries_prices[i+5] > linInterp(QuerySeries_times[i+2], QuerySeries_times[i+4],
-                                            QuerySeries_prices[i+2], QuerySeries_prices[i+4],
-                                                                                       QuerySeries_times[i+5]) &&
-                                                                                         QuerySeries_prices[i+1] > linInterp(QuerySeries_times[i+2], QuerySeries_times[i+4],
-                                                                                                                             QuerySeries_prices[i+2], QuerySeries_prices[i+4],
-                                                                                                                                                                        QuerySeries_times[i+1]) &&
-                                                                                                                                                                          QuerySeries_prices[i]   < linInterp(QuerySeries_times[i+2], QuerySeries_times[i+4],
-                                                                                                                                                                                                              QuerySeries_prices[i+2], QuerySeries_prices[i+4],
-                                                                                                                                                                                                                                                         QuerySeries_times[i])
+      QuerySeries_prices[i]   < QuerySeries_prices[i+2] &&
+      QuerySeries_prices[i+1] < QuerySeries_prices[i+3] &&
+      QuerySeries_prices[i+5] < QuerySeries_prices[i+3] &&
+      QuerySeries_prices[i+5] > linInterp(QuerySeries_times[i+2], QuerySeries_times[i+4],
+                                          QuerySeries_prices[i+2], QuerySeries_prices[i+4],
+                                          QuerySeries_times[i+5]) &&
+      QuerySeries_prices[i+1] > linInterp(QuerySeries_times[i+2], QuerySeries_times[i+4],
+                                          QuerySeries_prices[i+2], QuerySeries_prices[i+4],
+                                          QuerySeries_times[i+1]) &&
+      QuerySeries_prices[i]   < linInterp(QuerySeries_times[i+2], QuerySeries_times[i+4],
+                                          QuerySeries_prices[i+2], QuerySeries_prices[i+4],
+                                          QuerySeries_times[i])
     );
     
     if(!candidateSHS){
@@ -150,6 +156,7 @@ List FastFindII_chaosRegin(IntegerVector PrePro_indexFilter,
     //-----------------------------------------
     int jStart = PrePro_indexFilter[i+5];
     int originalSize = Original_times.size();
+    
     for(int j = jStart; j < originalSize - 1; j++){
       
       // if the original Prices rise above the right shoulder we can stop => invalid
@@ -161,8 +168,8 @@ List FastFindII_chaosRegin(IntegerVector PrePro_indexFilter,
       // Check if neckline is crossed
       double necklineY = linInterp(
         QuerySeries_times[i+2], QuerySeries_times[i+4],
-                                                 QuerySeries_prices[i+2], QuerySeries_prices[i+4],
-                                                                                            Original_times[j]
+        QuerySeries_prices[i+2], QuerySeries_prices[i+4],
+        Original_times[j]
       );
       
       // If price is below neckline => potential breakout
