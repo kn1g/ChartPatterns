@@ -63,6 +63,32 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// UltraFastFind
+Rcpp::DataFrame UltraFastFind(IntegerVector PrePro_indexFilter, NumericVector Original_times, NumericVector Original_prices);
+RcppExport SEXP _ChartPatterns_UltraFastFind(SEXP PrePro_indexFilterSEXP, SEXP Original_timesSEXP, SEXP Original_pricesSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type PrePro_indexFilter(PrePro_indexFilterSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type Original_times(Original_timesSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type Original_prices(Original_pricesSEXP);
+    rcpp_result_gen = Rcpp::wrap(UltraFastFind(PrePro_indexFilter, Original_times, Original_prices));
+    return rcpp_result_gen;
+END_RCPP
+}
+// fastDetectSHSiSHS
+Rcpp::List fastDetectSHSiSHS(IntegerVector PrePro_indexFilter, NumericVector Original_times, NumericVector Original_prices);
+RcppExport SEXP _ChartPatterns_fastDetectSHSiSHS(SEXP PrePro_indexFilterSEXP, SEXP Original_timesSEXP, SEXP Original_pricesSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type PrePro_indexFilter(PrePro_indexFilterSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type Original_times(Original_timesSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type Original_prices(Original_pricesSEXP);
+    rcpp_result_gen = Rcpp::wrap(fastDetectSHSiSHS(PrePro_indexFilter, Original_times, Original_prices));
+    return rcpp_result_gen;
+END_RCPP
+}
 // findPatterns
 Rcpp::List findPatterns(IntegerVector PrePro_indexFilter, NumericVector Original_times, NumericVector Original_prices);
 RcppExport SEXP _ChartPatterns_findPatterns(SEXP PrePro_indexFilterSEXP, SEXP Original_timesSEXP, SEXP Original_pricesSEXP) {
@@ -126,6 +152,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_ChartPatterns_FastFindII", (DL_FUNC) &_ChartPatterns_FastFindII, 3},
     {"_ChartPatterns_FastFindII_chaosRegin", (DL_FUNC) &_ChartPatterns_FastFindII_chaosRegin, 3},
     {"_ChartPatterns_fastFind_chaosRegin", (DL_FUNC) &_ChartPatterns_fastFind_chaosRegin, 3},
+    {"_ChartPatterns_UltraFastFind", (DL_FUNC) &_ChartPatterns_UltraFastFind, 3},
+    {"_ChartPatterns_fastDetectSHSiSHS", (DL_FUNC) &_ChartPatterns_fastDetectSHSiSHS, 3},
     {"_ChartPatterns_findPatterns", (DL_FUNC) &_ChartPatterns_findPatterns, 3},
     {"_ChartPatterns_getSlope", (DL_FUNC) &_ChartPatterns_getSlope, 4},
     {"_ChartPatterns_linearInterpolation", (DL_FUNC) &_ChartPatterns_linearInterpolation, 5},

@@ -14,13 +14,23 @@ fastFind <- function(PrePro_indexFilter, Original_times, Original_prices) {
     .Call(`_ChartPatterns_fastFind`, PrePro_indexFilter, Original_times, Original_prices)
 }
 
-#' @name fastFindII
-#' @title fastFind Patterns
-#' @description The pattern recognition is done for all paterns in one loop. The single functions loop per pattern over the dataset
-#' @param prices Vector with prices
-#' @param time Vector with time or indieces
-#' @param mask with PIPs in the price-time vectors
-#' @return Returns First the index where a pattern is located
+#' @name FastFindII
+#' @title Pattern Detection: SHS and iSHS
+#' @description Detects Shoulder-Head-Shoulder (SHS) and inverted Shoulder-Head-Shoulder (iSHS) patterns
+#'              in financial time series data. The algorithm analyzes pivot points to identify pattern 
+#'              formations and validates them through breakout detection.
+#' @param PrePro_indexFilter Vector of indices identifying pivot points in the original data series
+#' @param Original_times Vector with timestamps or indices for each data point
+#' @param Original_prices Vector with price values corresponding to each timestamp
+#' @return Returns a list containing:
+#'    - patternInfo: DataFrame with basic pattern identification and metrics
+#'    - Features1to20: DataFrame with pattern shape features and measurements
+#'    - Features21to40: DataFrame with trend analysis measurements
+#' @details
+#'   This implementation records both valid and invalid pattern candidates.
+#'   For SHS patterns: Checks that first point is below the neckline
+#'   For iSHS patterns: Checks that first point is above the neckline
+#'   Breakout detection confirms pattern validity by checking price crossing the neckline
 #' @examples
 #' c(1:10)
 #'
@@ -29,6 +39,24 @@ FastFindII <- function(PrePro_indexFilter, Original_times, Original_prices) {
     .Call(`_ChartPatterns_FastFindII`, PrePro_indexFilter, Original_times, Original_prices)
 }
 
+#' @name FastFindII_chaosRegin
+#' @title Enhanced SHS and iSHS Pattern Detection with Chaos Region Analysis
+#' @description Detects Shoulder-Head-Shoulder (SHS) and inverted Shoulder-Head-Shoulder (iSHS) patterns
+#'              in financial time series with additional focus on chaos region dynamics.
+#' @param PrePro_indexFilter Vector of indices identifying pivot points in the original data series
+#' @param Original_times Vector with timestamps or indices for each data point
+#' @param Original_prices Vector with price values corresponding to each timestamp
+#' @return Returns a list containing:
+#'    - patternInfo: DataFrame with pattern identification and trend information
+#'    - Features2: DataFrame with pattern point timestamps and prices
+#'    - Features21to40: DataFrame with return metrics
+#' @details
+#'   Tracks both valid and invalid pattern candidates using the validPattern flag.
+#'   Analyzes trend information before and after the pattern formation.
+#'   Calculates various return metrics at different time horizons.
+NULL
+
+#' @export
 FastFindII_chaosRegin <- function(PrePro_indexFilter, Original_times, Original_prices) {
     .Call(`_ChartPatterns_FastFindII_chaosRegin`, PrePro_indexFilter, Original_times, Original_prices)
 }
@@ -40,13 +68,50 @@ fastFind_chaosRegin <- function(PrePro_indexFilter, Original_times, Original_pri
     .Call(`_ChartPatterns_fastFind_chaosRegin`, PrePro_indexFilter, Original_times, Original_prices)
 }
 
+#' @name UltraFastFind
+#' @title Ultra Optimized Pattern Detection: SHS and iSHS
+#' @description High-performance implementation for detecting Shoulder-Head-Shoulder (SHS) and 
+#'              inverted Shoulder-Head-Shoulder (iSHS) patterns using data-oriented design and 
+#'              single-pass processing.
+#' @param PrePro_indexFilter Vector of indices identifying pivot points in the original data series
+#' @param Original_times Vector with timestamps or indices for each data point
+#' @param Original_prices Vector with price values corresponding to each timestamp
+#' @return DataFrame with pattern information and metrics
+#' @details
+#'   This implementation preserves the exact same detection logic as the original
+#'   but runs significantly faster through optimization techniques:
+#'   - Data-oriented design with contiguous memory
+#'   - Single-pass algorithm
+#'   - Precomputation of shared values
+#'   - No heap allocations in critical path
+#' @examples
+#' c(1:10)
+#'
+#' @export
+UltraFastFind <- function(PrePro_indexFilter, Original_times, Original_prices) {
+    .Call(`_ChartPatterns_UltraFastFind`, PrePro_indexFilter, Original_times, Original_prices)
+}
+
+#' @export
+fastDetectSHSiSHS <- function(PrePro_indexFilter, Original_times, Original_prices) {
+    .Call(`_ChartPatterns_fastDetectSHSiSHS`, PrePro_indexFilter, Original_times, Original_prices)
+}
+
 #' @name findPatterns
-#' @title findPatterns - Efficient Pattern Recognition
-#' @description Detects chart patterns in financial time series data with optimized implementation
-#' @param PrePro_indexFilter Vector with indices of pivot points in the original data
-#' @param Original_times Vector with time values
-#' @param Original_prices Vector with price values
-#' @return Returns a list with pattern information, timestamps, prices, and performance metrics
+#' @title Modern Pattern Detection with Enhanced Error Handling
+#' @description Detects SHS and iSHS patterns in financial time series using an object-oriented approach
+#' @param PrePro_indexFilter Vector of indices identifying pivot points in the original data series
+#' @param Original_times Vector with timestamps or indices for each data point
+#' @param Original_prices Vector with price values corresponding to each timestamp
+#' @return Returns a list containing:
+#'    - patternInfo: DataFrame with pattern identification and trend information
+#'    - Features2: DataFrame with pattern point timestamps and prices
+#'    - Features21to40: DataFrame with return metrics
+#' @details
+#'   Uses specialized detector classes for each pattern type.
+#'   Provides extensive error handling and debugging output.
+#'   Includes memory optimization through pre-allocation.
+#'   The detection criteria are consistent with other implementations.
 #' @examples
 #' 
 #' @export
@@ -84,8 +149,18 @@ linearInterpolation <- function(x1, x2, y1, y2, atPosition) {
 }
 
 #' @name safeLinearInterpolation
-NULL
-
+#' @title Safe Linear Interpolation
+#' @description Two-dimensional linear interpolation for a specific point with division-by-zero protection
+#' @param x1 First x coordinate
+#' @param x2 Second x coordinate
+#' @param y1 First y coordinate corresponding to x1
+#' @param y2 Second y coordinate corresponding to x2
+#' @param atPosition The point at which to calculate the interpolated value
+#' @return Returns the linear interpolated y-value for the specific point
+#' @examples
+#' safeLinearInterpolation(1, 2, 10, 20, 1.5) # Returns 15
+#'
+#' @export
 safeLinearInterpolation <- function(x1, x2, y1, y2, atPosition) {
     .Call(`_ChartPatterns_safeLinearInterpolation`, x1, x2, y1, y2, atPosition)
 }

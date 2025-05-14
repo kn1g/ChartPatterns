@@ -59,24 +59,40 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cmath>
+#include <fstream>
+#include <atomic>
+#include <iostream>
 
 using namespace Rcpp;
+
+// Instead of anonymous namespace, declare global variable with external linkage
+// This ensures a single instance across all files
+extern std::atomic<int> g_patternDataCount;
+
+// Declare global tracking function with external linkage
+extern void trackPatternDataAllocation(bool isAllocation);
 
 // --------------------------------------------------------------------------
 // Global Constants - Used across pattern detection implementations
 // --------------------------------------------------------------------------
 // Note: Pattern count is calculated dynamically based on input data size.
 // We don't need a hardcoded constant for this anymore.
-const int INVALID_TIME = 99999991;       // Sentinel value used to indicate an invalid or unset time value
+const int INVALID_TIME = -1;       // Sentinel value used to indicate an invalid or unset time value
 
 // --------------------------------------------------------------------------
 // Forward Declarations - Helper functions used by pattern detectors
 // --------------------------------------------------------------------------
 // Calculates a y-value at a given x position using linear interpolation between two points
 // with division-by-zero protection
-double safeLinearInterpolation(double x1, double x2, double y1, double y2, double atPosition);
+// Implementation is in safeLinearInterpolation.cpp and exported to R
+double safeLinearInterpolation(double x1, double x2, double y1, double y2, double x);
+
 // Calculates the slope between two points (used for various feature calculations)
 double getSlope(double x1, double x2, double y1, double y2);
+
+// Forward declaration of PatternDetector class to avoid circular reference
+class PatternDetector;
 
 // --------------------------------------------------------------------------
 // Pattern Data Structure - Holds all information about a detected pattern
@@ -95,179 +111,376 @@ struct PatternData {
     std::vector<int> timeStamps;    // Time points of all key positions in the pattern
     std::vector<double> priceStamps; // Price points of all key positions in the pattern
     
-    // Trend information (calculated after pattern detection)
-    double trendBeginPrice;         // Price at beginning of trend before pattern
-    int trendBeginTime;             // Time at beginning of trend before pattern
-    double trendEndPrice;           // Price at end of trend after pattern
-    int trendEndTime;               // Time at end of trend after pattern
+    // Detector reference to avoid lookups during processing
+    const PatternDetector* detector; // Pointer to the detector that created this pattern
+    
+    // ---------- Prior Trend Information ----------
+    double priorTrendStartPrice;    // Price at beginning of trend before pattern
+    int priorTrendStartTime;        // Time at beginning of trend before pattern
+    int priorTrendPointsCount = 0;  // Count of ascending/descending points in the prior trend
+    bool priorTrendComplete = false; // Flag indicating if prior trend info is complete
+    
+    // ---------- Following Trend Information ----------
+    double followingTrendStartPrice; // Price at beginning of trend after pattern
+    int followingTrendStartTime;     // Time at beginning of trend after pattern
+    int followingTrendPointsCount = 0; // Count of points in the trend following the pattern
+    bool followingTrendComplete = false; // Flag indicating if following trend info is complete
+    
+    // Status flags for incremental returns calculation
+    std::vector<bool> fixedWindowsFound;  // Tracks which fixed windows have been processed
+    std::vector<bool> relWindowsFound;    // Tracks which relative windows have been processed
     
     // Performance metrics (calculated after breakout)
     std::vector<double> returns;    // Returns at fixed time windows (1,3,5,10,30,60 periods)
     std::vector<double> relReturns; // Returns at relative time windows (1/3, 1/2, 1, 2, 4 times pattern length)
     
-    // Default constructor - Initialize all fields with default values
+    // Processing status flag
+    bool processed = false;         // Flag indicating if this pattern has been processed
+    
+    // Constructor with proper initialization of all fields
     PatternData() : 
-        startIdx(-1), leftShoulderIdx(-1), necklineStartIdx(-1), 
-        headIdx(-1), necklineEndIdx(-1), rightShoulderIdx(-1), breakoutIdx(-1),
-        patternName(""), trendBeginPrice(-1.0), trendBeginTime(INVALID_TIME),
-        trendEndPrice(-1.0), trendEndTime(INVALID_TIME) {}
+        // Initialize all indices to invalid value
+        startIdx(-1), 
+        leftShoulderIdx(-1), 
+        necklineStartIdx(-1), 
+        headIdx(-1), 
+        necklineEndIdx(-1), 
+        rightShoulderIdx(-1), 
+        breakoutIdx(NA_INTEGER),  // Use NA_INTEGER from R for breakout
+        
+        // Initialize pattern name to empty string
+        patternName(""), 
+        
+        // Initialize detector to nullptr
+        detector(nullptr), 
+        
+        // Initialize trend information
+        priorTrendStartPrice(NA_REAL), 
+        priorTrendStartTime(INVALID_TIME), 
+        priorTrendPointsCount(0), 
+        priorTrendComplete(false),
+        followingTrendStartPrice(NA_REAL), 
+        followingTrendStartTime(INVALID_TIME), 
+        followingTrendPointsCount(0), 
+        followingTrendComplete(false),
+        
+        // Initialize processing status
+        processed(false)
+    {
+        try {
+            // Track allocation
+            trackPatternDataAllocation(true);
+            
+            // Pre-allocate vectors with exact sizes needed for pattern points
+            // This prevents reallocations and ensures consistent access
+            timeStamps.resize(7, 0);       // 6 pattern points + breakout point
+            priceStamps.resize(7, 0.0);    // 6 pattern points + breakout point
+            
+            // Initialize return vectors with proper sizes and NA values
+            returns.resize(6, NA_REAL);    // 6 fixed windows
+            relReturns.resize(5, NA_REAL); // 5 relative windows
+            
+            // Initialize tracking arrays
+            fixedWindowsFound.resize(6, false); // 6 fixed windows
+            relWindowsFound.resize(5, false);   // 5 relative windows
+        }
+        catch (const std::exception& e) {
+            // Ensure vectors have at least empty state
+            timeStamps.clear();
+            priceStamps.clear();
+            returns.clear();
+            relReturns.clear();
+            fixedWindowsFound.clear();
+            relWindowsFound.clear();
+        }
+    }
+    
+    // Destructor
+    ~PatternData() {
+        // Call global tracking function to decrement counter
+        trackPatternDataAllocation(false);
+    }
+    
+    // Copy constructor to properly handle vector copying
+    PatternData(const PatternData& other) :
+        // Copy primitive fields
+        startIdx(other.startIdx),
+        leftShoulderIdx(other.leftShoulderIdx),
+        necklineStartIdx(other.necklineStartIdx),
+        headIdx(other.headIdx),
+        necklineEndIdx(other.necklineEndIdx),
+        rightShoulderIdx(other.rightShoulderIdx),
+        breakoutIdx(other.breakoutIdx),
+        patternName(other.patternName),
+        detector(other.detector),
+        // Deep copy vectors
+        timeStamps(other.timeStamps),
+        priceStamps(other.priceStamps),
+        // Copy trend data
+        priorTrendStartPrice(other.priorTrendStartPrice),
+        priorTrendStartTime(other.priorTrendStartTime),
+        priorTrendPointsCount(other.priorTrendPointsCount),
+        priorTrendComplete(other.priorTrendComplete),
+        followingTrendStartPrice(other.followingTrendStartPrice),
+        followingTrendStartTime(other.followingTrendStartTime),
+        followingTrendPointsCount(other.followingTrendPointsCount),
+        followingTrendComplete(other.followingTrendComplete),
+        // Copy return vectors and flags
+        returns(other.returns),
+        relReturns(other.relReturns),
+        fixedWindowsFound(other.fixedWindowsFound),
+        relWindowsFound(other.relWindowsFound),
+        // Copy processing flag
+        processed(other.processed)
+    {
+        // Track this new object
+        trackPatternDataAllocation(true);
+    }
+    
+    // Move constructor for efficient vector operations
+    PatternData(PatternData&& other) noexcept :
+        // Move primitive fields
+        startIdx(other.startIdx),
+        leftShoulderIdx(other.leftShoulderIdx),
+        necklineStartIdx(other.necklineStartIdx),
+        headIdx(other.headIdx),
+        necklineEndIdx(other.necklineEndIdx),
+        rightShoulderIdx(other.rightShoulderIdx),
+        breakoutIdx(other.breakoutIdx),
+        patternName(std::move(other.patternName)),
+        detector(other.detector),
+        // Move vectors efficiently
+        timeStamps(std::move(other.timeStamps)),
+        priceStamps(std::move(other.priceStamps)),
+        // Move trend data
+        priorTrendStartPrice(other.priorTrendStartPrice),
+        priorTrendStartTime(other.priorTrendStartTime),
+        priorTrendPointsCount(other.priorTrendPointsCount),
+        priorTrendComplete(other.priorTrendComplete),
+        followingTrendStartPrice(other.followingTrendStartPrice),
+        followingTrendStartTime(other.followingTrendStartTime),
+        followingTrendPointsCount(other.followingTrendPointsCount),
+        followingTrendComplete(other.followingTrendComplete),
+        // Move return vectors and flags
+        returns(std::move(other.returns)),
+        relReturns(std::move(other.relReturns)),
+        fixedWindowsFound(std::move(other.fixedWindowsFound)),
+        relWindowsFound(std::move(other.relWindowsFound)),
+        // Move processing flag
+        processed(other.processed)
+    {
+        // Track this new object
+        trackPatternDataAllocation(true);
+    }
+    
+    // Copy assignment operator
+    PatternData& operator=(const PatternData& other) {
+        if (this != &other) {
+            // Copy primitive fields
+            startIdx = other.startIdx;
+            leftShoulderIdx = other.leftShoulderIdx;
+            necklineStartIdx = other.necklineStartIdx;
+            headIdx = other.headIdx;
+            necklineEndIdx = other.necklineEndIdx;
+            rightShoulderIdx = other.rightShoulderIdx;
+            breakoutIdx = other.breakoutIdx;
+            patternName = other.patternName;
+            detector = other.detector;
+            priorTrendStartPrice = other.priorTrendStartPrice;
+            priorTrendStartTime = other.priorTrendStartTime;
+            priorTrendPointsCount = other.priorTrendPointsCount;
+            priorTrendComplete = other.priorTrendComplete;
+            followingTrendStartPrice = other.followingTrendStartPrice;
+            followingTrendStartTime = other.followingTrendStartTime;
+            followingTrendPointsCount = other.followingTrendPointsCount;
+            followingTrendComplete = other.followingTrendComplete;
+            processed = other.processed;
+            
+            // Deep copy all vectors
+            timeStamps = other.timeStamps;
+            priceStamps = other.priceStamps;
+            returns = other.returns;
+            relReturns = other.relReturns;
+            fixedWindowsFound = other.fixedWindowsFound;
+            relWindowsFound = other.relWindowsFound;
+
+            // Note: For assignments we DON'T call trackPatternDataAllocation
+            // since the object already exists and is already counted
+        }
+        return *this;
+    }
+    
+    // Move assignment operator
+    PatternData& operator=(PatternData&& other) noexcept {
+        if (this != &other) {
+            // Move primitive fields
+            startIdx = other.startIdx;
+            leftShoulderIdx = other.leftShoulderIdx;
+            necklineStartIdx = other.necklineStartIdx;
+            headIdx = other.headIdx;
+            necklineEndIdx = other.necklineEndIdx;
+            rightShoulderIdx = other.rightShoulderIdx;
+            breakoutIdx = other.breakoutIdx;
+            patternName = std::move(other.patternName);
+            detector = other.detector;
+            priorTrendStartPrice = other.priorTrendStartPrice;
+            priorTrendStartTime = other.priorTrendStartTime;
+            priorTrendPointsCount = other.priorTrendPointsCount;
+            priorTrendComplete = other.priorTrendComplete;
+            followingTrendStartPrice = other.followingTrendStartPrice;
+            followingTrendStartTime = other.followingTrendStartTime;
+            followingTrendPointsCount = other.followingTrendPointsCount;
+            followingTrendComplete = other.followingTrendComplete;
+            processed = other.processed;
+            
+            // Move vectors efficiently
+            timeStamps = std::move(other.timeStamps);
+            priceStamps = std::move(other.priceStamps);
+            returns = std::move(other.returns);
+            relReturns = std::move(other.relReturns);
+            fixedWindowsFound = std::move(other.fixedWindowsFound);
+            relWindowsFound = std::move(other.relWindowsFound);
+            
+            // Note: For assignments we DON'T call trackPatternDataAllocation
+            // since the object already exists and is already counted
+        }
+        return *this;
+    }
+    
+    // Gets the index of a specific point in the pattern
+    // pointNumber: 0=start, 1=leftShoulder, 2=necklineStart, 3=head, 4=necklineEnd, 5=rightShoulder
+    int getPointIndex(int pointNumber) const {
+        switch (pointNumber) {
+            case 0: return startIdx;
+            case 1: return leftShoulderIdx;
+            case 2: return necklineStartIdx;
+            case 3: return headIdx;
+            case 4: return necklineEndIdx;
+            case 5: return rightShoulderIdx;
+            default: return -1;
+        }
+    }
+    
+    // Gets the breakout index
+    int getBreakoutIndex() const {
+        return breakoutIdx;
+    }
+    
+    // ---------- Prior Trend Setter Methods ----------
+    
+    // Sets the prior trend start price
+    void setPriorTrendStartPrice(double price) {
+        priorTrendStartPrice = price;
+    }
+    
+    // Sets the prior trend start time
+    void setPriorTrendStartTime(int time) {
+        priorTrendStartTime = time;
+    }
+    
+    // Sets the count of trend points in the prior trend
+    void setPriorTrendInfo(int count) {
+        priorTrendPointsCount = count;
+    }
+
+    // Marks prior trend as complete
+    void markPriorTrendComplete() {
+        priorTrendComplete = true;
+    }
+    
+    // ---------- Following Trend Setter Methods ----------
+    
+    // Sets the following trend start price
+    void setFollowingTrendStartPrice(double price) {
+        followingTrendStartPrice = price;
+    }
+    
+    // Sets the following trend start time
+    void setFollowingTrendStartTime(int time) {
+        followingTrendStartTime = time;
+    }
+    
+    // Sets the count of trend points in the following trend
+    void setFollowingTrendInfo(int count) {
+        followingTrendPointsCount = count;
+    }
+
+    // Marks following trend as complete
+    void markFollowingTrendComplete() {
+        followingTrendComplete = true;
+    }
 };
 
-// --------------------------------------------------------------------------
-// Pattern Detector Interface - Base class for all pattern detectors
-// --------------------------------------------------------------------------
+/**
+ * @class PatternDetector
+ * @brief Abstract base class for all pattern detectors
+ * 
+ * This class defines the common interface that all pattern detectors must implement.
+ * It provides pure virtual methods for pattern detection, breakout detection, and
+ * pattern invalidation. It also provides default implementations for utility methods.
+ * 
+ * Pattern-specific detectors (SHSDetector, ISHSDetector) inherit from this class
+ * and provide the pattern-specific implementation details.
+ */
 class PatternDetector {
 public:
-    // Virtual destructor for proper inheritance
+    // Virtual destructor for proper cleanup in derived classes
     virtual ~PatternDetector() = default;
     
-    // Detect a pattern starting at position in the time series
-    // This is the primary detection method that checks if a pattern exists
-    // Returns true if a valid pattern is found, with details in outPattern
+    /**
+     * @brief Detect a pattern at the given position
+     * 
+     * @param prices Vector of price values
+     * @param times Vector of corresponding timestamps
+     * @param position Index to check for pattern
+     * @param outPattern Structure to be filled with pattern data if detected
+     * @return True if pattern is detected, false otherwise
+     */
     virtual bool detect(const NumericVector& prices, const NumericVector& times, 
                        int position, PatternData& outPattern) const = 0;
     
-    // Checks if a breakout of the pattern has occurred at the given position
-    // For SHS: breakout is when price crosses below the neckline
-    // For iSHS: breakout is when price crosses above the neckline
+    /**
+     * @brief Detect pattern breakout at the given position
+     * 
+     * @param prices Vector of price values
+     * @param times Vector of corresponding timestamps
+     * @param position Current position to check for breakout
+     * @param pattern Previously detected pattern data
+     * @return True if a breakout is detected, false otherwise
+     */
     virtual bool detectBreakout(const NumericVector& prices, const NumericVector& times,
-                              int position, const PatternData& pattern) const = 0;
+                              int position, PatternData& pattern) const = 0;
     
-    // Checks if a pattern has been invalidated by price action at the given position
-    // Different patterns have different invalidation criteria
-    // Returns true if the pattern should no longer be considered valid
+    /**
+     * @brief Check if pattern is invalidated at the given position
+     * 
+     * @param prices Vector of price values
+     * @param times Vector of corresponding timestamps
+     * @param position Current position to check for invalidation
+     * @param pattern Previously detected pattern data
+     * @return True if the pattern is invalidated, false otherwise
+     */
     virtual bool isPatternInvalidated(const NumericVector& prices, const NumericVector& times,
-                                   int position, const PatternData& pattern) const = 0;
+                                   int position, PatternData& pattern) const = 0;
     
-    // Returns the name of this pattern type (e.g., "SHS" or "iSHS")
+    // Get the name of the pattern
     virtual std::string getName() const = 0;
     
-    // Calculates trend information before and after the pattern
-    // This helps analyze the context in which the pattern formed
-    virtual void calculateTrend(const NumericVector& prices, const NumericVector& times,
-                              const PatternData& pattern, int breakoutIdx,
-                              double& trendBeginPrice, int& trendBeginTime,
-                              double& trendEndPrice, int& trendEndTime) const {
-        // Default implementation - can be overridden by specific detectors
-        trendBeginPrice = -1.0;
-        trendBeginTime = INVALID_TIME;
-        trendEndPrice = -1.0;
-        trendEndTime = INVALID_TIME;
-    }
-    
-    // Calculates return metrics after a pattern breakout
-    // This helps evaluate the performance/profitability of trading based on the pattern
-    virtual void calculateReturns(const NumericVector& prices, const NumericVector& times,
-                               int breakoutIdx, int patternStartIdx, 
-                               std::vector<double>& returns,
-                               std::vector<double>& relReturns) const {
-        // Validate inputs
-        if (breakoutIdx < 0 || breakoutIdx >= prices.size()) {
-            Rcpp::warning("Invalid breakout index in calculateReturns");
-            std::fill(returns.begin(), returns.end(), NA_REAL);
-            std::fill(relReturns.begin(), relReturns.end(), NA_REAL);
-            return;
-        }
-        
-        if (patternStartIdx < 0 || patternStartIdx >= prices.size()) {
-            Rcpp::warning("Invalid pattern start index in calculateReturns");
-            std::fill(returns.begin(), returns.end(), NA_REAL);
-            std::fill(relReturns.begin(), relReturns.end(), NA_REAL);
-            return;
-        }
-        
-        if (R_IsNA(prices[breakoutIdx]) || R_IsNaN(prices[breakoutIdx])) {
-            Rcpp::warning("Invalid breakout price (NA/NaN) in calculateReturns");
-            std::fill(returns.begin(), returns.end(), NA_REAL);
-            std::fill(relReturns.begin(), relReturns.end(), NA_REAL);
-            return;
-        }
-        
-        // Fixed time windows to check (1,3,5,10,30,60 periods after breakout)
-        const std::vector<int> fixedWindows = {1, 3, 5, 10, 30, 60};
-        
-        // Ensure vectors are the correct size
-        if (returns.size() != fixedWindows.size()) {
-            returns.resize(fixedWindows.size(), 0);
-        }
-        
-        // Relative time windows based on pattern length
-        if (relReturns.size() != 5) {
-            relReturns.resize(5, 0);
-        }
-        
-        // Calculate pattern length to determine relative time windows
-        int patternLengthInDays = times[breakoutIdx] - times[patternStartIdx];
-        
-        // Handle patterns with zero or negative length (shouldn't happen, but being safe)
-        if (patternLengthInDays <= 0) {
-            Rcpp::warning("Pattern has zero or negative length in days");
-            patternLengthInDays = 1; // Use a default minimum length
-        }
-        
-        // Calculate relative time differences (1/3, 1/2, 1, 2, 4 times pattern length)
-        int relDiff13 = patternLengthInDays/3;
-        int relDiff12 = patternLengthInDays/2;
-        int relDiff1  = patternLengthInDays;
-        int relDiff2  = patternLengthInDays*2;
-        int relDiff4  = patternLengthInDays*4;
-        
-        std::vector<int> relWindows = {relDiff13, relDiff12, relDiff1, relDiff2, relDiff4};
-        
-        // Initialize all return values to NA (R's missing value)
-        std::fill(returns.begin(), returns.end(), NA_REAL);
-        std::fill(relReturns.begin(), relReturns.end(), NA_REAL);
-        
-        // Tracking which returns have been found
-        std::vector<bool> foundFixed(fixedWindows.size(), false);
-        std::vector<bool> foundRel(relWindows.size(), false);
-        
-        // Breakout price is our reference for calculating returns
-        double breakoutPrice = prices[breakoutIdx];
-        
-        // Scan through future data to find returns at specific time windows
-        for (int forward = breakoutIdx + 1; forward < prices.size(); ++forward) {
-            
-            // Skip invalid data points
-            if (R_IsNA(prices[forward]) || R_IsNaN(prices[forward]) || 
-                R_IsNA(times[forward]) || R_IsNaN(times[forward])) {
-                continue;
-            }
-            
-            // How many periods have passed since breakout
-            int timeDiff = times[forward] - times[breakoutIdx];
-            
-            // Check if we've reached each fixed time window
-            for (size_t w = 0; w < fixedWindows.size(); ++w) {
-                if (!foundFixed[w] && timeDiff > fixedWindows[w]) {
-                    // Save the price at this time window
-                    returns[w] = prices[forward];
-                    foundFixed[w] = true;
-                }
-            }
-            
-            // Check if we've reached each relative time window
-            for (size_t w = 0; w < relWindows.size(); ++w) {
-                if (!foundRel[w] && timeDiff > relWindows[w]) {
-                    // For relative returns, calculate price ratio
-                    relReturns[w] = prices[forward] / breakoutPrice;
-                    foundRel[w] = true;
-                }
-            }
-            
-            // Exit early only if all returns have been found
-            bool allFound = std::all_of(foundFixed.begin(), foundFixed.end(), [](bool v){ return v; }) &&
-                           std::all_of(foundRel.begin(), foundRel.end(), [](bool v){ return v; });
-            
-            // Exit if all returns found, otherwise continue to end of data
-            if (allFound) {
-                break;
-            }
-        }
+    /**
+     * @brief Update return metrics for the pattern at the given position
+     * Default implementation that can be overridden by specific detectors
+     * 
+     * @param prices Vector of price values
+     * @param times Vector of corresponding timestamps
+     * @param currentPosition Current position to update returns
+     * @param pattern Pattern data to update
+     * @return True if all returns have been calculated, false otherwise
+     */
+    virtual bool updateReturns(const NumericVector& prices, const NumericVector& times,
+                             int currentPosition, PatternData& pattern) const {
+        // Default implementation - can be overridden by pattern-specific detectors
+        return false;
     }
 };
-
-// The inline implementation of safeLinearInterpolation is removed.
-// We'll use the implementation from safeLinearInterpolation.cpp instead.
 
 #endif // PATTERN_DETECTOR_HPP 

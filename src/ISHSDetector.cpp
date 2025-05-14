@@ -1,11 +1,11 @@
-#include "PatternDetector.hpp"
+#include "ISHSDetector.hpp"
 #include <cmath>
 
 /**
  * @file ISHSDetector.cpp
- * @brief Implements an Inverse Shoulder-Head-Shoulder (iSHS) pattern detector
+ * @brief Implements an Inverted Shoulder-Head-Shoulder (ISHS) pattern detector
  * 
- * The iSHS pattern is a bullish reversal pattern that forms after a downtrend.
+ * The ISHS pattern is a bullish reversal pattern that forms after a downtrend.
  * It consists of:
  * 1. A trough (left shoulder)
  * 2. A lower trough (head)
@@ -16,281 +16,325 @@
  * This implementation uses the exact conditions from the original code.
  * 
  * Visual representation:
- *             Neckline  Breakout
- *           ____________|  |
- *          /            \  /
- *         /              \/
- *    /\  /                \  /\
- *   /  \/                  \/  \
- *  /                            \
- * /       Head                   \
- *         /\                      
- *        /  \     Right Shoulder  
- * Left  /    \    /\             
- * Shoulder    \  /  \            
- *    /\        \/    \           
- *   /  \              \          
+ *      ___          ___
+ *     /   \        /   \
+ * ___/     \______/     \___
+ *            \    /
+ *             \  /
+ *     Left     \/      Right
+ *   Shoulder    Head   Shoulder
+ *      \_/      \_/      \_/
  */
 
-class ISHSDetector : public PatternDetector {
-public:
-    bool detect(const NumericVector& prices, const NumericVector& times, 
-                int position, PatternData& outPattern) const override {
+// Implementation of detect method
+bool ISHSDetector::detect(const NumericVector& prices, const NumericVector& times, int position, PatternData& outPattern) const {
+    
+    // Need 6 points for a complete ISHS pattern (points 0-5)
+    // 0: Starting point
+    // 1: Left shoulder (trough)
+    // 2: Peak between left shoulder and head
+    // 3: Head (lowest trough)
+    // 4: Peak between head and right shoulder
+    // 5: Right shoulder (trough)
+    if (position + 5 >= prices.size()) {
+        return false;  // Not enough points remaining in the series
+    }
+    
+    // Calculate the neckline as a straight line connecting the peaks
+    // (points 2 and 4) and extending in both directions
+    
+    // Calculate neckline value at the left shoulder position
+    double leftNecklineValue = safeLinearInterpolation(
+        times[position+2], times[position+4],  // x-coordinates of the peaks
+        prices[position+2], prices[position+4], // y-coordinates of the peaks 
+        times[position+1]  // x-coordinate where we want the neckline value (left shoulder)
+    );
+    
+    // Calculate neckline value at the right shoulder position
+    double rightNecklineValue = safeLinearInterpolation(
+        times[position+2], times[position+4], 
+        prices[position+2], prices[position+4], 
+        times[position+5]  // x-coordinate where we want the neckline value (right shoulder)
+    );
+    
+    // Calculate neckline value at the first point position
+    double firstPointNecklineValue = safeLinearInterpolation(
+        times[position+2], times[position+4], 
+        prices[position+2], prices[position+4], 
+        times[position]  // x-coordinate where we want the neckline value (first point)
+    );
+    
+    // Check all ISHS pattern conditions
+    bool isValid = 
+        // 1. Basic price relationships - correct sequence of highs and lows
+        prices[position] > prices[position+1] &&         // First point is a high (above left shoulder)
+        prices[position] > prices[position+2] &&         // First point is higher than first peak
+        prices[position+1] > prices[position+3] &&       // Left shoulder must be higher than head
+        prices[position+5] > prices[position+3] &&       // Right shoulder must be higher than head
         
-        // Need 6 points for a complete iSHS pattern (points 0-5)
-        // 0: Starting point
-        // 1: Left shoulder (trough)
-        // 2: Peak between left shoulder and head
-        // 3: Head (lowest trough)
-        // 4: Peak between head and right shoulder
-        // 5: Right shoulder (trough)
-        if (position + 5 >= prices.size()) {
-            return false;  // Not enough points remaining in the series
+        // 2. Neckline conditions - shoulders must be below the neckline
+        prices[position+5] < rightNecklineValue &&      // Right shoulder is below the neckline
+        prices[position+1] < leftNecklineValue &&       // Left shoulder is below the neckline
+        
+        // First point check - pattern should start above the neckline
+        prices[position] > firstPointNecklineValue;     // First point is above the neckline
+        
+    // If any condition is not met, this is not a valid ISHS pattern
+    if (!isValid) {
+        return false;
+    }
+    
+    // Pattern is valid - initialize the pattern data structure
+    outPattern.patternName = "iSHS";
+    outPattern.startIdx = position;
+    outPattern.detector = this;  // Store reference to this detector
+
+    // Store key indices in the pattern
+    outPattern.leftShoulderIdx = position + 1;
+    outPattern.necklineStartIdx = position + 2;
+    outPattern.headIdx = position + 3;
+    outPattern.necklineEndIdx = position + 4;
+    outPattern.rightShoulderIdx = position + 5;
+
+    // Breakout hasn't been detected yet
+    outPattern.breakoutIdx = NA_INTEGER;  
+    
+    // Store timestamps and price values for all points in the pattern
+    // Double-check that vectors are properly sized before storing data
+    if (outPattern.timeStamps.size() < 7) {
+        outPattern.timeStamps.resize(7, 0);
+    }
+    if (outPattern.priceStamps.size() < 7) {
+        outPattern.priceStamps.resize(7, 0.0);
+    }
+    
+    // Store pattern points with bounds checking
+    for (int i = 0; i < 6 && (position + i) < prices.size(); i++) {
+        outPattern.timeStamps[i] = times[position + i];
+        outPattern.priceStamps[i] = prices[position + i];
+    }
+    
+    return true;  // Valid ISHS pattern detected
+}
+
+// Implementation of detectBreakout method
+bool ISHSDetector::detectBreakout(const NumericVector& prices, const NumericVector& times, int currentIndexPosition, PatternData& pattern) const {
+    
+    // Breakout can only happen after the right shoulder and we need one more point to confirm
+    // CRITICAL FIX: Safe bounds checking before accessing currentIndexPosition+1
+    if (currentIndexPosition <= pattern.rightShoulderIdx || 
+        currentIndexPosition >= prices.size() - 1) {  // Ensure there's one more position available
+        return false;
+    }
+    
+    // Safe access to timeStamps and priceStamps arrays
+    if (pattern.timeStamps.size() < 5 || pattern.priceStamps.size() < 5) {
+        return false; // Not enough data in pattern arrays
+    }
+    
+    // Calculate the neckline value at the current position j
+    double necklineValue = safeLinearInterpolation(
+        pattern.timeStamps[2], // Left trough timestamp (index 2 in pattern array)
+        pattern.timeStamps[4], // Right trough timestamp (index 4 in pattern array)
+        pattern.priceStamps[2], // Left trough price
+        pattern.priceStamps[4], // Right trough price
+        times[currentIndexPosition]
+    );
+    
+    // Check only this specific position for iSHS breakout:
+    // 1. Price crosses above the neckline (bullish breakout)
+    // 2. Next price remains above the right shoulder
+    bool priceAboveNeckline = prices[currentIndexPosition] > necklineValue;
+    
+    // CRITICAL FIX: Use right shoulder price from pattern array instead of accessing original prices
+    // This avoids out-of-bounds memory access that causes std::bad_alloc
+    double rightShoulderPrice = pattern.priceStamps[5]; // Right shoulder is at index 5 in pattern array
+    
+    // CRITICAL FIX: We've already checked that currentIndexPosition+1 is in bounds above
+    bool nextPriceAboveRightShoulder = prices[currentIndexPosition+1] > rightShoulderPrice;
+    
+    bool breakoutDetected = priceAboveNeckline && nextPriceAboveRightShoulder;
+    
+    // Store breakout data if a breakout is detected
+    if (breakoutDetected) {
+        // Store the breakout index (for reference)
+        pattern.breakoutIdx = currentIndexPosition + 1; // +1 because we're checking the next price
+        
+        // Make sure there's enough space in the arrays
+        if (pattern.timeStamps.size() > 6 && pattern.priceStamps.size() > 6) {
+            // Store breakout time and price (at index 6)
+            pattern.timeStamps[6] = times[currentIndexPosition + 1];
+            pattern.priceStamps[6] = prices[currentIndexPosition + 1];
+        }
+    }
+    
+    return breakoutDetected;
+}
+
+// Implementation of getName method
+std::string ISHSDetector::getName() const {
+    return "iSHS";  // Return the pattern name
+}
+
+// Implementation of isPatternInvalidated method
+bool ISHSDetector::isPatternInvalidated(const NumericVector& prices, const NumericVector& times, int position, PatternData& pattern) const {
+    // For iSHS, invalidation occurs when price falls below the right shoulder
+    // But NOT at the right shoulder position itself (special case)
+
+    // Only check after the right shoulder is formed
+    if (position > pattern.rightShoulderIdx) {
+        // Bounds checking to avoid memory access issues
+        if (position >= prices.size() || pattern.priceStamps.size() <= 5) {
+            return false; // Cannot determine invalidation without sufficient data
         }
         
-        // Input validation - check for missing or invalid values
-        for (int i = 0; i < 6; i++) {
-            if (R_IsNA(prices[position + i]) || R_IsNA(times[position + i]) || 
-                R_IsNaN(prices[position + i]) || R_IsNaN(times[position + i])) {
-                return false;  // Invalid input data (contains NA or NaN)
+        // Get current price and right shoulder price for comparison
+        double currentPrice = prices[position];
+        double rightShoulderPrice = pattern.priceStamps[5]; // Right shoulder is at index 5 in pattern array
+        
+        // For iSHS: Invalidation when price falls BELOW right shoulder
+        if (currentPrice < rightShoulderPrice) {
+            return true;
+        }
+    }
+    
+    return false;  // Pattern remains valid
+}
+
+// Implementation of updateReturns method to avoid nested loops
+bool ISHSDetector::updateReturns(const NumericVector& prices, const NumericVector& times,
+                               int currentPosition, PatternData& pattern) const {
+    // Skip if no breakout or current position is before/at breakout
+    if (pattern.breakoutIdx == NA_INTEGER || currentPosition <= pattern.breakoutIdx) {
+        return false;
+    }
+    
+    // CRITICAL FIX: Validate current position is within bounds
+    if (currentPosition >= prices.size() || currentPosition >= times.size()) {
+        return false;
+    }
+    
+    // CRITICAL FIX: We should store the breakout price in the pattern when breakout is detected,
+    // rather than re-accessing the original array with a potentially large index
+    
+    // Check if breakout price has been stored in the pattern data (at index 6)
+    double breakoutPrice;
+    if (pattern.priceStamps.size() > 6 && pattern.priceStamps[6] != 0.0 && !R_IsNA(pattern.priceStamps[6])) {
+        breakoutPrice = pattern.priceStamps[6];
+    } else {
+        // Fallback with bounds checking - still risky but better than before
+        if (pattern.breakoutIdx >= 0 && pattern.breakoutIdx < prices.size()) {
+            breakoutPrice = prices[pattern.breakoutIdx];
+            // Store it for future use if we have space
+            if (pattern.priceStamps.size() > 6) {
+                pattern.priceStamps[6] = breakoutPrice;
             }
+        } else {
+            return false; // Invalid breakout index
         }
-        
-        // Calculate the neckline as a straight line connecting the peaks
-        // (points 2 and 4) and extending in both directions
-        
-        // Calculate neckline value at the left shoulder position
-        double leftNecklineValue = safeLinearInterpolation(
-            times[position+2], times[position+4],  // x-coordinates of the peaks
-            prices[position+2], prices[position+4], // y-coordinates of the peaks
-            times[position+1]  // x-coordinate where we want the neckline value (left shoulder)
-        );
-        
-        // Calculate neckline value at the right shoulder position
-        double rightNecklineValue = safeLinearInterpolation(
-            times[position+2], times[position+4], 
-            prices[position+2], prices[position+4], 
-            times[position+5]  // x-coordinate where we want the neckline value (right shoulder)
-        );
-        
-        // Calculate neckline value at the first point position
-        double firstPointNecklineValue = safeLinearInterpolation(
-            times[position+2], times[position+4], 
-            prices[position+2], prices[position+4], 
-            times[position]  // x-coordinate where we want the neckline value (first point)
-        );
-        
-        // Check all iSHS pattern conditions according to the original implementation
-        bool isValid = 
-            // 1. Basic price relationships - correct sequence of highs and lows
-            prices[position] > prices[position+1] &&         // First point is a high (above left shoulder)
-            prices[position] > prices[position+2] &&         // First point is higher than first peak
-            prices[position+1] > prices[position+3] &&       // Left shoulder must be higher than head
-            prices[position+5] > prices[position+3] &&       // Right shoulder must be higher than head
-            
-            // 2. Neckline conditions - shoulders must be below the neckline
-            prices[position+5] < rightNecklineValue &&      // Right shoulder is below the neckline
-            prices[position+1] < leftNecklineValue &&       // Left shoulder is below the neckline
-            
-            // 3. First point check - pattern should start above the neckline
-            // This ensures pattern isn't too skewed and starts from a proper position
-            prices[position] > firstPointNecklineValue;     // First point is above the neckline
-            
-        // If any condition is not met, this is not a valid iSHS pattern
-        if (!isValid) {
-            return false;
-        }
-        
-        // Pattern is valid - initialize the pattern data structure
-        outPattern.patternName = "iSHS";
-        outPattern.startIdx = position;
-        outPattern.leftShoulderIdx = position + 1;
-        outPattern.necklineStartIdx = position + 2;
-        outPattern.headIdx = position + 3;
-        outPattern.necklineEndIdx = position + 4;
-        outPattern.rightShoulderIdx = position + 5;
-        outPattern.breakoutIdx = -1;  // Breakout hasn't been detected yet
-        
-        // Store timestamps and price values for all points in the pattern
-        outPattern.timeStamps.resize(7);  // 6 points + 1 for breakout (to be filled later)
-        outPattern.priceStamps.resize(7);
-        for (int i = 0; i < 6; i++) {
-            outPattern.timeStamps[i] = times[position + i];
-            outPattern.priceStamps[i] = prices[position + i];
-        }
-        
-        return true;  // Valid iSHS pattern detected
     }
     
-    bool detectBreakout(const NumericVector& prices, const NumericVector& times,
-                        int j, const PatternData& pattern) const override {
-        
-        // Breakout can only happen after the right shoulder and we need one more point to confirm
-        if (j <= pattern.rightShoulderIdx || j >= prices.size() - 1) {
-            return false;
+    // Get breakout time with similar safety checks
+    int breakoutTime;
+    if (pattern.timeStamps.size() > 6 && pattern.timeStamps[6] != 0 && !R_IsNA(pattern.timeStamps[6])) {
+        breakoutTime = pattern.timeStamps[6];
+    } else {
+        // Fallback with bounds checking
+        if (pattern.breakoutIdx >= 0 && pattern.breakoutIdx < times.size()) {
+            breakoutTime = times[pattern.breakoutIdx];
+            // Store it for future use
+            if (pattern.timeStamps.size() > 6) {
+                pattern.timeStamps[6] = breakoutTime;
+            }
+        } else {
+            return false; // Invalid breakout index
         }
-        
-        // Calculate the neckline value at the current position j
-        double necklineValue = safeLinearInterpolation(
-            pattern.timeStamps[pattern.necklineStartIdx - pattern.startIdx], 
-            pattern.timeStamps[pattern.necklineEndIdx - pattern.startIdx],
-            pattern.priceStamps[pattern.necklineStartIdx - pattern.startIdx], 
-            pattern.priceStamps[pattern.necklineEndIdx - pattern.startIdx],
-            times[j]
-        );
-        
-        // For iSHS, a breakout occurs when:
-        // 1. Price crosses above the neckline (bullish breakout)
-        // 2. Next price remains above the right shoulder (confirms the breakout)
-        return (prices[j] > necklineValue && 
-                prices[j+1] > pattern.priceStamps[pattern.rightShoulderIdx - pattern.startIdx]);
     }
     
-    std::string getName() const override {
-        return "iSHS";  // Return the pattern name
+    // Calculate time difference from breakout point - using stored breakout time
+    int timeDiff = times[currentPosition] - breakoutTime;
+    
+    // Fixed time windows to check (1,3,5,10,30,60 periods after breakout)
+    const std::vector<int> fixedWindows = {1, 3, 5, 10, 30, 60};
+    
+    // Ensure returns vectors are properly sized
+    if (pattern.returns.size() != fixedWindows.size()) {
+        pattern.returns.resize(fixedWindows.size(), NA_REAL);
     }
     
-    bool isPatternInvalidated(const NumericVector& prices, const NumericVector& times,
-                            int position, const PatternData& pattern) const override {
-        // For iSHS patterns, invalidation occurs when:
-        // Price moves below the right shoulder after pattern formation
-        // This invalidates the bullish sentiment of the pattern
-        
-        // Exception: don't check if we're at the right shoulder point itself
-        if (position == pattern.rightShoulderIdx) {
-            return false;
-        }
-        
-        // Pattern is invalidated if price goes below the right shoulder
-        double rightShoulderPrice = pattern.priceStamps[pattern.rightShoulderIdx - pattern.startIdx];
-        return prices[position] < rightShoulderPrice;
+    // Ensure relReturns vectors are properly sized (should be 5)
+    if (pattern.relReturns.size() != 5) {
+        pattern.relReturns.resize(5, NA_REAL);
     }
     
-    void calculateTrend(const NumericVector& prices, const NumericVector& times,
-                       const PatternData& pattern, int breakoutIdx,
-                       double& trendBeginPrice, int& trendBeginTime,
-                       double& trendEndPrice, int& trendEndTime) const override {
-        
-        // For iSHS patterns, we look backwards for descending high points
-        // to identify the preceding downtrend (iSHS forms at the end of a downtrend)
-        trendBeginPrice = -1.0;  // Default value if no trend is found
-        trendBeginTime = INVALID_TIME;
-        
-        // Walk backwards in steps of 2 (looking at every other point)
-        // Since pivot points alternate between highs and lows, stepping by 2
-        // examines points of the same type (i.e., all highs or all lows)
-        for (int rev = pattern.startIdx; rev > 2; rev -= 2) {
-            if (prices[rev] < prices[rev-2]) {
-                // Found a prior high that's lower than the one before it
-                // This indicates a descending high point pattern, confirming downtrend
-                trendBeginPrice = prices[rev-2];  // Store the earliest point in the trend
-                trendBeginTime = times[rev-2];
+    // Calculate pattern length for relative time windows - use startIdx with bounds checking
+    int patternStartTime;
+    if (pattern.startIdx >= 0 && pattern.startIdx < times.size()) {
+        patternStartTime = times[pattern.startIdx];
+    } else {
+        // Fallback to safe value from pattern data
+        patternStartTime = pattern.timeStamps[0];
+    }
+    
+    int patternLengthInDays = breakoutTime - patternStartTime;
+    
+    // CRITICAL FIX: Sanity check for pattern length to prevent invalid memory operations
+    if (patternLengthInDays <= 0) {
+        patternLengthInDays = 1; // Use minimum safe value to prevent division by zero
+    }
+    
+    // Calculate relative time differences
+    int relDiff13 = patternLengthInDays/3;  // 1/3 of pattern length
+    int relDiff12 = patternLengthInDays/2;  // 1/2 of pattern length
+    int relDiff1  = patternLengthInDays;    // Same as pattern length
+    int relDiff2  = patternLengthInDays*2;  // Double pattern length
+    int relDiff4  = patternLengthInDays*4;  // Quadruple pattern length
+    
+    // Store relative diffs in a vector for easier processing
+    std::vector<int> relWindows = {relDiff13, relDiff12, relDiff1, relDiff2, relDiff4};
+    
+    // Initialize tracking arrays if this is the first call after breakout
+    if (currentPosition == pattern.breakoutIdx + 1) {
+        pattern.fixedWindowsFound.resize(fixedWindows.size(), false);
+        pattern.relWindowsFound.resize(relWindows.size(), false);
+    }
+    
+    // CRITICAL FIX: Validate tracking arrays are properly sized
+    if (pattern.fixedWindowsFound.size() != fixedWindows.size()) {
+        pattern.fixedWindowsFound.resize(fixedWindows.size(), false);
+    }
+    
+    if (pattern.relWindowsFound.size() != relWindows.size()) {
+        pattern.relWindowsFound.resize(relWindows.size(), false);
+    }
+    
+    // Check fixed time windows
+    for (size_t w = 0; w < fixedWindows.size(); ++w) {
+        if (!pattern.fixedWindowsFound[w] && timeDiff > fixedWindows[w]) {
+            // For ISHS, we expect higher prices after breakout (bullish pattern)
+            // Use log return for 1-period, price ratio for others
+            if (w == 0) {
+                pattern.returns[w] = log(prices[currentPosition] / breakoutPrice);  // Log return for 1-period
             } else {
-                // Once we find a high that's not lower than previous, the trend ends
-                break;
+                pattern.returns[w] = prices[currentPosition] / breakoutPrice;  // Price ratio for other periods
             }
-        }
-        
-        // For iSHS, we look forward for ascending low points after the pattern
-        // to identify the following uptrend (iSHS initiates an uptrend)
-        trendEndPrice = -1.0;  // Default value if no trend is found
-        trendEndTime = INVALID_TIME;
-        
-        // Walk forward in steps of 2, looking at ascending lows
-        for (int forward = pattern.rightShoulderIdx; forward < (prices.size() - 2); forward += 2) {
-            if (prices[forward] < prices[forward+2]) {
-                // Found a subsequent low that's higher than the previous one
-                // This indicates an ascending low point pattern, confirming uptrend
-                trendEndPrice = prices[forward+2];  // Store the furthest point in the trend
-                trendEndTime = times[forward+2];
-            } else {
-                // Once we find a low that's not higher than the next, the trend ends
-                break;
-            }
+            pattern.fixedWindowsFound[w] = true;
         }
     }
     
-    void calculateReturns(const NumericVector& prices, const NumericVector& times,
-                         int breakoutIdx, int patternStartIdx, 
-                         std::vector<double>& returns,
-                         std::vector<double>& relReturns) const override {
-        // For iSHS patterns, use specialized returns calculation
-        // This is tailored specifically for iSHS patterns, with log returns for short timeframes
-        
-        // Fixed time windows to check (1,3,5,10,30,60 periods after breakout)
-        const std::vector<int> fixedWindows = {1, 3, 5, 10, 30, 60};
-        
-        // Ensure returns vector has correct size
-        if (returns.size() != fixedWindows.size()) {
-            returns.resize(fixedWindows.size(), 0);
-        }
-        
-        // Ensure relReturns vector has correct size (1/3, 1/2, 1, 2, 4 times pattern length)
-        if (relReturns.size() != 5) {
-            relReturns.resize(5, 0);
-        }
-        
-        // Calculate pattern length for relative time windows
-        int patternLengthInDays = times[breakoutIdx] - times[patternStartIdx];
-        
-        // Calculate relative time differences
-        int relDiff13 = patternLengthInDays/3;  // 1/3 of pattern length
-        int relDiff12 = patternLengthInDays/2;  // 1/2 of pattern length
-        int relDiff1  = patternLengthInDays;    // Same as pattern length
-        int relDiff2  = patternLengthInDays*2;  // Double pattern length
-        int relDiff4  = patternLengthInDays*4;  // Quadruple pattern length
-        
-        // Store relative diffs in a vector for easier processing
-        std::vector<int> relWindows = {relDiff13, relDiff12, relDiff1, relDiff2, relDiff4};
-        
-        // Initialize all return values to NA (R's missing value)
-        std::fill(returns.begin(), returns.end(), NA_REAL);
-        std::fill(relReturns.begin(), relReturns.end(), NA_REAL);
-        
-        // Initialize flags to track which returns have been found
-        std::vector<bool> foundFixed(fixedWindows.size(), false);
-        std::vector<bool> foundRel(relWindows.size(), false);
-        
-        // Breakout price is our reference for calculating returns
-        double breakoutPrice = prices[breakoutIdx];
-        
-        // Loop through future data once, checking all time periods
-        // Continue until all returns are found or we reach the end of the data
-        for (int forward = breakoutIdx + 1; forward < prices.size(); ++forward) {
-            
-            // Calculate time difference from breakout point
-            int timeDiff = times[forward] - times[breakoutIdx];
-            
-            // Check each fixed window
-            for (size_t w = 0; w < fixedWindows.size(); ++w) {
-                if (!foundFixed[w] && timeDiff > fixedWindows[w]) {
-                    // For iSHS, use log return for first window, price ratios for others
-                    // This matches the specific implementation in FastFind_ChaosRegin.cpp
-                    if (w == 0) {
-                        returns[w] = log(prices[forward] / breakoutPrice);  // Log return for 1-period
-                    } else {
-                        returns[w] = prices[forward] / breakoutPrice;  // Price ratio for other periods
-                    }
-                    foundFixed[w] = true;
-                }
-            }
-            
-            // Check each relative window
-            for (size_t w = 0; w < relWindows.size(); ++w) {
-                if (!foundRel[w] && timeDiff > relWindows[w]) {
-                    // For relative returns, always use price ratio
-                    relReturns[w] = prices[forward] / breakoutPrice;
-                    foundRel[w] = true;
-                }
-            }
-            
-            // Optimization: if we've found all returns, we can exit early
-            bool allFound = std::all_of(foundFixed.begin(), foundFixed.end(), [](bool v){ return v; }) &&
-                           std::all_of(relReturns.begin(), relReturns.end(), [](bool v){ return v; });
-            
-            if (allFound) {
-                break;  // Exit if all returns found
-            }
+    // Check relative time windows
+    for (size_t w = 0; w < relWindows.size(); ++w) {
+        if (!pattern.relWindowsFound[w] && timeDiff > relWindows[w]) {
+            // For relative returns, always use price ratio
+            pattern.relReturns[w] = prices[currentPosition] / breakoutPrice;
+            pattern.relWindowsFound[w] = true;
         }
     }
-}; 
+    
+    // Check if all returns have been found
+    bool allFixedFound = std::all_of(pattern.fixedWindowsFound.begin(), pattern.fixedWindowsFound.end(), [](bool v) { return v; });
+    bool allRelFound = std::all_of(pattern.relWindowsFound.begin(), pattern.relWindowsFound.end(), [](bool v) { return v; });
+    
+    // Return true if all returns have been calculated
+    return allFixedFound && allRelFound;
+}

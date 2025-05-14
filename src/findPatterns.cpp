@@ -1,53 +1,63 @@
 #include <vector>
 #include <string>
 #include <cmath>
-// Include only the essential headers
 #include <Rcpp.h>
 #include "PatternDetector.hpp"
+#include <iostream>
+#include "SHSDetector.hpp"
+#include "ISHSDetector.hpp"
+#include "TrendTracker.hpp"
+#include <deque>
+#include <memory>
 
 using namespace Rcpp;
 
+// Function forward declarations
+Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
+                        NumericVector Original_times,
+                        NumericVector Original_prices);
+
 /**
  * @file findPatterns.cpp
- * @brief Main implementation for chart pattern detection
+ * @brief Modern Object-Oriented Implementation for Chart Pattern Detection
  * 
- * This file contains the main function for detecting patterns (specifically SHS and iSHS) 
- * in financial time series data. It utilizes specialized detector classes that implement 
- * the PatternDetector interface to identify specific patterns in the data.
+ * This file contains the main function for detecting Shoulder-Head-Shoulder (SHS) and
+ * inverted Shoulder-Head-Shoulder (iSHS) patterns in financial time series data.
+ * It uses an object-oriented approach with specialized detector classes that implement
+ * the PatternDetector interface, offering better separation of concerns and error handling.
  * 
- * The detection system works by:
- * 1. Accepting time series data (prices and timestamps)
- * 2. Using various pattern detectors (SHS and iSHS) to identify patterns
- * 3. Tracking detected patterns and monitoring for breakouts
- * 4. Calculating returns and trends after pattern completion
+ * Core features:
+ * 1. Robust error handling with multiple try-catch blocks
+ * 2. Memory optimization with pre-allocation based on maximum possible patterns
+ * 3. Smart pointers for automatic resource management
+ * 4. Strong validation to ensure pattern criteria match other implementations
  * 
- * This implementation incorporates the most efficient and reliable features from 
- * previous implementations while maintaining strict adherence to the original
- * pattern recognition criteria.
- * 
- * PERFORMANCE OPTIMIZATIONS:
- * - Dynamic pattern count calculation to optimize memory usage
- * - Early rejection of invalid patterns to minimize processing
- * - Pre-allocation of memory for all data structures
- * - Single-pass return calculation to avoid redundant processing
- * - Smart pointers for automatic resource management
- * - Direct storage in output vectors without redundant pattern collection
+ * Detection process:
+ * 1. Extracts pivot points from original time series
+ * 2. Uses specialized detectors to identify potential patterns
+ * 3. Validates patterns through breakout detection
+ * 4. Calculates trend information and return metrics
+ * 5. Returns all data in a structured format compatible with R
  */
-
-// Include the actual detector implementations
-#include "SHSDetector.cpp"
-#include "ISHSDetector.cpp"
 
 // Declare resultList at the top-level scope so it's accessible after the try-catch blocks
 Rcpp::List resultList;
 
 //' @name findPatterns
-//' @title findPatterns - Efficient Pattern Recognition
-//' @description Detects chart patterns in financial time series data with optimized implementation
-//' @param PrePro_indexFilter Vector with indices of pivot points in the original data
-//' @param Original_times Vector with time values
-//' @param Original_prices Vector with price values
-//' @return Returns a list with pattern information, timestamps, prices, and performance metrics
+//' @title Modern Pattern Detection with Enhanced Error Handling
+//' @description Detects SHS and iSHS patterns in financial time series using an object-oriented approach
+//' @param PrePro_indexFilter Vector of indices identifying pivot points in the original data series
+//' @param Original_times Vector with timestamps or indices for each data point
+//' @param Original_prices Vector with price values corresponding to each timestamp
+//' @return Returns a list containing:
+//'    - patternInfo: DataFrame with pattern identification and trend information
+//'    - Features2: DataFrame with pattern point timestamps and prices
+//'    - Features21to40: DataFrame with return metrics
+//' @details
+//'   Uses specialized detector classes for each pattern type.
+//'   Provides extensive error handling and debugging output.
+//'   Includes memory optimization through pre-allocation.
+//'   The detection criteria are consistent with other implementations.
 //' @examples
 //' 
 //' @export
@@ -55,22 +65,9 @@ Rcpp::List resultList;
 Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
                         NumericVector Original_times,
                         NumericVector Original_prices) {
-    // NEW VERSION CHECK - This will verify we're running our latest code
-    Rcpp::Rcout << "\n\n[DEBUG-VERSION] ************* RUNNING NEW VERSION WITH CUSTOM BREAKOUT DETECTION ************" << std::endl;
                           
-    // Add extremely detailed debug output
-    Rcpp::Rcout << "\n\n[DEBUG-VERBOSE] ============= STARTING findPatterns ===============" << std::endl;
-    Rcpp::Rcout << "[DEBUG-VERBOSE] Original_prices size: " << Original_prices.size() << std::endl;
-    Rcpp::Rcout << "[DEBUG-VERBOSE] Original_times size: " << Original_times.size() << std::endl;
-    Rcpp::Rcout << "[DEBUG-VERBOSE] PrePro_indexFilter size: " << PrePro_indexFilter.size() << std::endl;
-    
-    // Flag to track if we should return empty results due to errors
-    bool returnEmptyResults = false;
-    
     // Function to create empty results
     auto createEmptyResults = []() {
-        Rcpp::Rcout << "[DEBUG] Creating empty results structures" << std::endl;
-        
         // Create empty but valid DataFrame structures for all return values
         Rcpp::DataFrame empty_patternInfo = Rcpp::DataFrame::create(
             Rcpp::Named("PatternName") = std::vector<std::string>(),
@@ -89,8 +86,6 @@ Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
             Rcpp::Named("Rendite1V") = std::vector<double>()
         );
         
-        Rcpp::Rcout << "[DEBUG] Returning empty results" << std::endl;
-        
         return Rcpp::List::create(
             Rcpp::Named("patternInfo") = empty_patternInfo,
             Rcpp::Named("Features2") = empty_Features2,
@@ -98,740 +93,490 @@ Rcpp::List findPatterns(IntegerVector PrePro_indexFilter,
         );
     };
     
-    try {
-        Rcpp::Rcout << "[DEBUG-VERBOSE] Inside main try block" << std::endl;
-                
-    // Input validation
-    if (PrePro_indexFilter.size() < 7) {
-        Rcpp::Rcout << "[ERROR] Preprocessed index filter must have more than 6 elements for pattern detection." << std::endl;
-        return Rcpp::List::create(
-            Rcpp::Named("error") = "Preprocessed index filter must have more than 6 elements for pattern detection."
-        );
-    }
-    
-        Rcpp::Rcout << "[DEBUG-VERBOSE] Validating index values" << std::endl;
-    // Validate index values are in range
-    for (int i = 0; i < PrePro_indexFilter.size(); i++) {
-        if (PrePro_indexFilter[i] < 0 || PrePro_indexFilter[i] >= Original_prices.size()) {
-            Rcpp::Rcout << "[ERROR] Index at position " << i << " (" << PrePro_indexFilter[i] 
-                        << ") is out of range (max: " << Original_prices.size() - 1 << ")" << std::endl;
+    try {            
+        // Input validation
+        if (PrePro_indexFilter.size() < 7) {
+            Rcpp::Rcout << "Error: Preprocessed index filter must have more than 6 elements for pattern detection." << std::endl;
             return Rcpp::List::create(
-                Rcpp::Named("error") = "Index out of range in PrePro_indexFilter"
+                Rcpp::Named("error") = "Preprocessed index filter must have more than 6 elements for pattern detection."
             );
         }
-    }
     
-        Rcpp::Rcout << "[DEBUG-VERBOSE] Input validation passed" << std::endl;
-        Rcpp::Rcout << "[DEBUG-VERBOSE] Initializing output containers" << std::endl;
-    
-    // ---- Output containers ----
-    // Pattern identification vectors
-    std::vector<std::string> patternNames;
-    std::vector<bool> validPatterns;
-    
-    // Pattern position vectors
-    std::vector<int> firstIndexPrePro;
-    std::vector<int> firstIndexOriginal;
-    std::vector<int> breakoutIndices;
-    
-    // Timestamps for each key point
-    std::vector<int> timeStamp0;
-    std::vector<int> timeStamp1;
-    std::vector<int> timeStamp2;
-    std::vector<int> timeStamp3;
-    std::vector<int> timeStamp4;
-    std::vector<int> timeStamp5;
-    std::vector<int> timeStampBreakout;
-    
-    // Prices for each key point
-    std::vector<double> priceStamp0;
-    std::vector<double> priceStamp1;
-    std::vector<double> priceStamp2;
-    std::vector<double> priceStamp3;
-    std::vector<double> priceStamp4;
-    std::vector<double> priceStamp5;
-    std::vector<double> priceStampBreakout;
-    
-    // Trend information vectors
-    std::vector<double> trendBeginPrices;
-    std::vector<double> trendBeginTimes;
-    std::vector<double> trendEndPrices;
-    std::vector<double> trendEndTimes;
-    
-    // Returns vectors (fixed windows)
-    std::vector<double> returns1;
-    std::vector<double> returns3;
-    std::vector<double> returns5;
-    std::vector<double> returns10;
-    std::vector<double> returns30;
-    std::vector<double> returns60;
-    
-    // Returns vectors (relative windows)
-    std::vector<double> relReturns13;
-    std::vector<double> relReturns12;
-    std::vector<double> relReturns1;
-    std::vector<double> relReturns2;
-    std::vector<double> relReturns4;
-    
-    // ---- Data preparation ----
-    
-    NumericVector QuerySeries_times;
-    NumericVector QuerySeries_prices;
-    
-    try {
-        Rcpp::Rcout << "[DEBUG] Starting data preparation" << std::endl;
+        // ---- Output containers ----
+        // Pattern identification vectors
+        std::vector<std::string> patternNames;
+        std::vector<bool> validPatterns;
         
-        // Extract pivot points (PIPs) from the original dataset
-        // OPTIMIZATION: Using Rcpp's subsetting operation which is more efficient than manual extraction
-        QuerySeries_times = Original_times[PrePro_indexFilter];
-        QuerySeries_prices = Original_prices[PrePro_indexFilter];
+        // Pattern position vectors
+        std::vector<int> firstIndexPrePro;
+        std::vector<int> firstIndexOriginal;
+        std::vector<int> breakoutIndices;
         
-        Rcpp::Rcout << "[DEBUG] Data preparation complete. Extracted " 
-                    << QuerySeries_prices.size() << " pivot points." << std::endl;
-    } catch (const std::exception& e) {
-        Rcpp::Rcout << "[DEBUG] Exception during data preparation: " << e.what() << std::endl;
-            returnEmptyResults = true;
-    } catch (...) {
-        Rcpp::Rcout << "[DEBUG] Unknown exception during data preparation" << std::endl;
-            returnEmptyResults = true;
+        // Timestamps for each key point
+        std::vector<int> timeStamp0;
+        std::vector<int> timeStamp1;
+        std::vector<int> timeStamp2;
+        std::vector<int> timeStamp3;
+        std::vector<int> timeStamp4;
+        std::vector<int> timeStamp5;
+        std::vector<int> timeStampBreakout;
+        
+        // Prices for each key point
+        std::vector<double> priceStamp0;
+        std::vector<double> priceStamp1;
+        std::vector<double> priceStamp2;
+        std::vector<double> priceStamp3;
+        std::vector<double> priceStamp4;
+        std::vector<double> priceStamp5;
+        std::vector<double> priceStampBreakout;
+        
+        // Trend information vectors
+        std::vector<double> priorTrendStartPrices;
+        std::vector<int> priorTrendStartTimes;
+        std::vector<int> priorTrendPointsCounts;
+        std::vector<double> followingTrendStartPrices;
+        std::vector<int> followingTrendStartTimes;
+        std::vector<int> followingTrendPointsCounts;
+        
+        // Returns vectors (fixed windows)
+        std::vector<double> returns1;
+        std::vector<double> returns3;
+        std::vector<double> returns5;
+        std::vector<double> returns10;
+        std::vector<double> returns30;
+        std::vector<double> returns60;
+        
+        // Returns vectors (relative windows)
+        std::vector<double> relReturns13;
+        std::vector<double> relReturns12;
+        std::vector<double> relReturns1;
+        std::vector<double> relReturns2;
+        std::vector<double> relReturns4;
+        
+        // ---- Data preparation ----
+        // Extract pivot points (PIPs) from the original dataset using Rcpp's subsetting
+        NumericVector QuerySeries_times = Original_times[PrePro_indexFilter];
+        NumericVector QuerySeries_prices = Original_prices[PrePro_indexFilter];
+            
+        // ---- Output container initialization ----
+        // Pre-calculate maximum possible pattern count for optimal memory allocation
+        // For head-and-shoulders, we need at least 6 consecutive pivot points
+        int maxPossiblePatterns = QuerySeries_prices.size() / 6;
+
+        // Don't put arbitrary limits, but catch unreasonable values that could indicate a bug
+        if (maxPossiblePatterns > QuerySeries_prices.size()) {
+            Rcpp::Rcout << "WARNING: Pattern count estimate exceeds data size, capping to data size" << std::endl;
+            maxPossiblePatterns = QuerySeries_prices.size();
         }
-        
-        // Check if we should return early due to errors in data preparation
-        if (returnEmptyResults) {
-            Rcpp::Rcout << "[DEBUG] Returning empty results due to data preparation errors" << std::endl;
-            return createEmptyResults();
-    }
-    
-    // ---- Output container initialization ----
-    
-    int maxPossiblePatterns = 0;
-    try {
-        Rcpp::Rcout << "[DEBUG] Starting container initialization" << std::endl;
-        
-        // OPTIMIZATION: Pre-calculate maximum possible pattern count for optimal memory allocation
-        // Each pattern needs at least 6 points, so max non-overlapping patterns = total points / 6
-        maxPossiblePatterns = QuerySeries_prices.size() / 6;
-        Rcpp::Rcout << "[DEBUG] Maximum possible patterns: " << maxPossiblePatterns << std::endl;
-    } catch (const std::exception& e) {
-        Rcpp::Rcout << "[DEBUG] Exception during container initialization: " << e.what() << std::endl;
-            returnEmptyResults = true;
-    } catch (...) {
-        Rcpp::Rcout << "[DEBUG] Unknown exception during container initialization" << std::endl;
-            returnEmptyResults = true;
-        }
-        
-        // Check if we should return early due to errors in container initialization
-        if (returnEmptyResults) {
-            Rcpp::Rcout << "[DEBUG] Returning empty results due to container initialization errors" << std::endl;
-            return createEmptyResults();
-    }
-    
-    // ---- Pattern detector initialization ----
-    
-    // OPTIMIZATION: Use smart pointers for automatic memory management
-    std::vector<std::unique_ptr<PatternDetector>> detectors;
-    
-    try {
-            Rcpp::Rcout << "[DEBUG-VERBOSE] Starting detector initialization" << std::endl;
-        
-            // Pre-allocate memory with explicit size to avoid reallocation
+
+        // ---- Pattern detector initialization ----
+        // Use smart pointers for automatic memory management
+        std::vector<std::unique_ptr<PatternDetector>> detectors;
+        // Pre-allocate memory with explicit size to avoid reallocation
         detectors.reserve(2); // We know exactly how many detectors we'll add
-        
-            Rcpp::Rcout << "[DEBUG-VERBOSE] Creating SHS detector" << std::endl;
-            try {
-                detectors.push_back(std::unique_ptr<PatternDetector>(new SHSDetector()));
-                Rcpp::Rcout << "[DEBUG-VERBOSE] SHS detector created successfully" << std::endl;
-            } catch (const std::exception& e) {
-                Rcpp::Rcout << "[ERROR] Failed to create SHS detector: " << e.what() << std::endl;
-                returnEmptyResults = true;
-            }
-            
-            if (!returnEmptyResults) {
-                Rcpp::Rcout << "[DEBUG-VERBOSE] Creating iSHS detector" << std::endl;
-                try {
-                    detectors.push_back(std::unique_ptr<PatternDetector>(new ISHSDetector()));
-                    Rcpp::Rcout << "[DEBUG-VERBOSE] iSHS detector created successfully" << std::endl;
-                } catch (const std::exception& e) {
-                    Rcpp::Rcout << "[ERROR] Failed to create iSHS detector: " << e.what() << std::endl;
-                    returnEmptyResults = true;
-                }
-            }
-            
-            if (!returnEmptyResults) {
-                Rcpp::Rcout << "[DEBUG-VERBOSE] Detector initialization complete. Created " 
-                    << detectors.size() << " detectors" << std::endl;
+        // Create SHS detector
+        detectors.push_back(std::unique_ptr<PatternDetector>(new SHSDetector()));
+        // Create iSHS detector
+        detectors.push_back(std::unique_ptr<PatternDetector>(new ISHSDetector()));
         
         // Safety check before entering main loop
         if (QuerySeries_prices.size() <= 6) {
-                    Rcpp::Rcout << "[DEBUG-VERBOSE] Not enough data points to search for patterns" << std::endl;
-                    returnEmptyResults = true;
+            Rcpp::Rcout << "Not enough data points to search for patterns" << std::endl;
+            return createEmptyResults();
+        }
+        
+        // -----------------------------------------------------------------
+        // ---- Main pattern detection loop ----
+        // -----------------------------------------------------------------
+        
+        // Track patterns that are being monitored for breakout/invalidation
+        std::deque<std::unique_ptr<PatternData>> potentialPatterns;
+        
+        // Create trend tracker for global trend tracking
+        TrendTracker trendTracker;
+        
+        // Main loop - scan through filtered price series to identify patterns
+        for (size_t i = 0; i < (QuerySeries_prices.size() - 6); ++i) {
+            
+            // Update trend tracking with current position
+            // Check if any trend was reset
+            bool trendReset = trendTracker.updateTrends(QuerySeries_prices, QuerySeries_times, i);
+            
+            // If a trend reset occurred, update trend info for patterns that need it
+            if (trendReset) {
+                trendTracker.applyTrendInfoToPatterns(potentialPatterns);
+            }
+            
+            // First phase: Check for new patterns at current position
+            for (const auto& detector : detectors) {
+                
+                auto pattern = std::make_unique<PatternData>();
+                
+                // Try to detect a new pattern at the current position
+                bool detected = detector->detect(QuerySeries_prices, QuerySeries_times, i, *pattern);
+                
+                if (detected) {
+                    // Apply trend information immediately after detection
+                    trendTracker.applyTrendInfo(*pattern);
+                    
+                    // Add to potential patterns for monitoring
+                    potentialPatterns.push_back(std::move(pattern));
                 }
             }
             
-            if (!returnEmptyResults) {
-                Rcpp::Rcout << "[DEBUG-VERBOSE] Will start main detection loop with " 
-                    << QuerySeries_prices.size() - 6 << " positions to check" << std::endl;
-            }
-    } catch (const std::exception& e) {
-        Rcpp::Rcout << "[DEBUG] Exception during detector initialization: " << e.what() << std::endl;
-            returnEmptyResults = true;
-    } catch (...) {
-        Rcpp::Rcout << "[DEBUG] Unknown exception during detector initialization" << std::endl;
-            returnEmptyResults = true;
-        }
-        
-        // Check if we should return early due to errors in detector initialization
-        if (returnEmptyResults) {
-            Rcpp::Rcout << "[DEBUG] Returning empty results due to detector initialization errors" << std::endl;
-            return createEmptyResults();
-    }
-    
-    // -----------------------------------------------------------------
-    // ---- Main pattern detection loop ----
-    // -----------------------------------------------------------------
-    //
-    // ARCHITECTURAL NOTE:
-    // Pattern data is stored directly in the output vectors instead of keeping a separate
-    // collection of pattern objects. This avoids redundant storage and improves memory usage.
-    // The pattern detector classes are responsible for pattern-specific logic (detection,
-    // invalidation, breakout), while this function handles data collection and formatting
-    // for R output. This separation of concerns keeps the detector classes focused on their
-    // core functionality without needing to know about the output format requirements.
-    //
-    try {
-        Rcpp::Rcout << "[DEBUG] Starting main detection loop" << std::endl;
-        size_t patterns_found = 0;
-        
-            for (size_t i = 0; i < (QuerySeries_prices.size() - 6) && !returnEmptyResults; ++i) {
-            // Simplified progress reporting - less frequent and more minimal
-            if (i % 500 == 0 || i == 0) {
-                Rcpp::Rcout << "[DEBUG] Processing position " << i << " / " 
-                       << (QuerySeries_prices.size() - 6) << std::endl;
-            }
-            
-            // For each detector, check if a pattern is detected at position i
-            for (const auto& detector : detectors) {
-                PatternData pattern;
-                    bool detected = false;
+            // Second phase: Check for breakouts and invalidations of existing patterns
+            // We use original price series for this phase
+            if (!potentialPatterns.empty()) {
+                // Get current position in original series
+                int currentOriginalPos = PrePro_indexFilter[i];
+                
+                // Safety check for bounds
+                if (currentOriginalPos < 0 || currentOriginalPos >= Original_prices.size()) {
+                    Rcpp::Rcout << "Warning: Invalid position in original series: " << currentOriginalPos << std::endl;
+                    continue;
+                }
+                
+                // Ensure there's room for next position checks (breakout detection needs position+1)
+                // This prevents out-of-bounds access in the detector methods
+                if (currentOriginalPos >= Original_prices.size() - 1) {
+                    continue; // Skip if we're at the last position (can't check next value)
+                }
+                
+                // Check each potential pattern that hasn't been processed yet
+                for (auto& patternPtr : potentialPatterns) {
+                    auto& pattern = *patternPtr;
                     
-                    // Try to detect patterns
-                    try {
-                        detected = detector->detect(QuerySeries_prices, QuerySeries_times, i, pattern);
-                        
-                        // Immediately ensure that pattern data structures are properly sized and initialized
-                        if (detected) {
-                            // Ensure pattern arrays have proper sizes to avoid memory alignment issues
-                            Rcpp::Rcout << "[DEBUG-VERBOSE] Verifying pattern data structures" << std::endl;
-                            
-                            // Ensure timeStamps and priceStamps are properly sized (should be 7 for 6 pattern points + 1 breakout)
-                            if (pattern.timeStamps.size() < 7) {
-                                Rcpp::Rcout << "[DEBUG] Resizing pattern.timeStamps from " 
-                                        << pattern.timeStamps.size() << " to 7" << std::endl;
-                                pattern.timeStamps.resize(7, NA_INTEGER);
-                            }
-                            
-                            if (pattern.priceStamps.size() < 7) {
-                                Rcpp::Rcout << "[DEBUG] Resizing pattern.priceStamps from " 
-                                        << pattern.priceStamps.size() << " to 7" << std::endl;
-                                pattern.priceStamps.resize(7, NA_REAL);
-                            }
-                            
-                            // Ensure returns arrays are properly sized
-                            if (pattern.returns.size() < 6) {
-                                Rcpp::Rcout << "[DEBUG] Resizing pattern.returns from " 
-                                        << pattern.returns.size() << " to 6" << std::endl;
-                                pattern.returns.resize(6, NA_REAL);
-                            }
-                            
-                            if (pattern.relReturns.size() < 5) {
-                                Rcpp::Rcout << "[DEBUG] Resizing pattern.relReturns from " 
-                                        << pattern.relReturns.size() << " to 5" << std::endl;
-                                pattern.relReturns.resize(5, NA_REAL);
-                            }
-                            
-                            // Validate startIdx to ensure it's in bounds
-                            if (pattern.startIdx < 0 || pattern.startIdx >= static_cast<int>(QuerySeries_prices.size())) {
-                                Rcpp::Rcout << "[ERROR] Invalid pattern.startIdx: " << pattern.startIdx 
-                                        << " (should be 0-" << QuerySeries_prices.size()-1 << ")" << std::endl;
-                                pattern.startIdx = 0; // Set to a safe default value
-                            }
-                        }
-                    } catch (const std::exception& e) {
-                        Rcpp::Rcout << "[DEBUG] Exception in pattern detection: " << e.what() << std::endl;
-                        // Continue processing other detectors, this one just failed
+                    // Skip already processed patterns
+                    if (pattern.processed) continue;
+                    
+                    // Skip patterns where right shoulder position hasn't been reached
+                    if (pattern.rightShoulderIdx > i) continue;
+                    
+                    // Get detector from pattern (stored during pattern detection)
+                    const PatternDetector* detector = pattern.detector;
+                    
+                    // Skip if detector reference is invalid
+                    if (!detector) {
+                        Rcpp::Rcout << "Detector reference is invalid" << std::endl;
                         continue;
                     }
                     
-                    // If pattern detected, process it
-                    if (detected) {
-                        patterns_found++;
-                        if (patterns_found % 10 == 1) {
-                            Rcpp::Rcout << "[DEBUG] Pattern '" << pattern.patternName << "' detected at position " << i << std::endl;
-                        }
+                    // Check if breakout or invalidation occurs at this position
+                    try {
+                        // Check if pattern is invalidated at the current pivot position
+                        bool isInvalidated = detector->isPatternInvalidated(
+                            Original_prices, Original_times, currentOriginalPos, pattern);
                         
-                        // OPTIMIZATION: Safety check against theoretical maximum to prevent memory issues
-                        if (patternNames.size() >= static_cast<size_t>(maxPossiblePatterns)) {
-                            Rcpp::Rcout << "[DEBUG] Maximum pattern count reached (" << maxPossiblePatterns << "). Stopping detection." << std::endl;
-                            break; // Exit the loop instead of stopping with an error
-                        }
-                        
-                        // Pattern is detected, now search for breakout
-                        bool foundBreakout = false;
-                        
-                        // Only output breakout search for some patterns to reduce volume
-                        if (patterns_found % 50 == 1) {
-                            Rcpp::Rcout << "[DEBUG] Searching for breakout for pattern " << patterns_found << std::endl;
-                        }
-                        
-                        // Add more detailed debugging for the breakout search
-                        Rcpp::Rcout << "[DEBUG-VERBOSE] Starting breakout search at pattern point " << i+5 
-                                  << ", original index " << PrePro_indexFilter[i+5] << std::endl;
-                        Rcpp::Rcout << "[DEBUG-VERBOSE] Original_times.size(): " << Original_times.size() << std::endl;
-                        
-                        // Safety check for index bounds before starting breakout search
-                        if (i+5 >= PrePro_indexFilter.size() || PrePro_indexFilter[i+5] >= Original_times.size() - 1) {
-                            Rcpp::Rcout << "[ERROR] Index out of bounds for breakout search. Skipping breakout search." << std::endl;
-                            continue; // Skip breakout search for this pattern
-                        }
-                        
-                        // OPTIMIZATION: Start breakout search after right shoulder
-                        // This avoids unnecessary checks before the pattern is complete
-                        for (int j = PrePro_indexFilter[i+5]; j < Original_times.size() - 1; ++j) {
-                            
-                            // Add immediate debug output to see if we reach this point
-                            Rcpp::Rcout << "[DEBUG-CRITICAL] In breakout search loop for j=" << j << std::endl;
-                            
-                            // **FULLY REWRITTEN BREAKOUT DETECTION - FAILSAFE VERSION FOR ALL PATTERN TYPES**
-                            // Dump all relevant pointers and values before doing any operations
-                            Rcpp::Rcout << "[DEBUG-CRASH] Pattern info: patternName=" << pattern.patternName 
-                                       << ", pattern.timeStamps.size()=" << pattern.timeStamps.size() 
-                                       << ", pattern.priceStamps.size()=" << pattern.priceStamps.size() << std::endl;
-                            
-                            try {
-                                // Complete verification of detector object - but we won't use it directly
-                                if (!detector) {
-                                    Rcpp::Rcout << "[ERROR-CRASH] Detector is null - skipping breakout detection" << std::endl;
-                                    break;
-                                }
-                                
-                                // Additional safety check for indices
-                                if (j < 0 || j >= Original_times.size() - 1) {
-                                    Rcpp::Rcout << "[ERROR] Breakout search index j=" << j 
-                                              << " out of bounds. Aborting breakout search." << std::endl;
-                                    break;
-                                }
-                                
-                                // Ensure that pattern data is properly set before attempting to use it
-                                if (pattern.timeStamps.size() < 7 || pattern.priceStamps.size() < 7) {
-                                    Rcpp::Rcout << "[ERROR-CRASH] Pattern arrays not properly sized in breakout loop" << std::endl;
-                                    // Ensure proper size before proceeding
-                                    pattern.timeStamps.resize(7, NA_INTEGER);
-                                    pattern.priceStamps.resize(7, NA_REAL);
-                                }
-                                
-                                // Direct implementation for all pattern types to avoid any detector method calls
-                                if (pattern.patternName == "SHS") {
-                                    Rcpp::Rcout << "[DEBUG-CRASH] Using failsafe SHS detection code" << std::endl;
-                                    
-                                    // Invalidation check: if price rises above right shoulder, pattern is invalid
-                                    if (Original_prices[j] > pattern.priceStamps[5] && 
-                                        j != PrePro_indexFilter[i+5]) {
-                                        Rcpp::Rcout << "[DEBUG] SHS pattern invalidated - price rose above right shoulder" << std::endl;
-                                        break;
-                                    }
-                                    
-                                    // Calculate neckline value using direct array access (with bounds checks)
-                                    double necklineValue = 0.0;
-                                    
-                                    // Simple average of shoulder prices as a fallback
-                                    double simpleNeckline = (pattern.priceStamps[1] + pattern.priceStamps[5]) / 2.0;
-                                    
-                                    // Try to calculate the proper neckline if we have valid data
-                                    try {
-                                        int x1 = pattern.timeStamps[2];  // Trough1 time 
-                                        int x2 = pattern.timeStamps[4];  // Trough2 time
-                                        double y1 = pattern.priceStamps[2];  // Trough1 price
-                                        double y2 = pattern.priceStamps[4];  // Trough2 price
-                                        
-                                        // Linear interpolation to calculate neckline at current position
-                                        if (std::abs(x2 - x1) < 1e-15) {
-                                            // If x values are the same, just average the y values
-                                            necklineValue = (y1 + y2) / 2.0;
-                                        } else {
-                                            // Calculate slope and interpolate
-                                            double slope = (y2 - y1) / static_cast<double>(x2 - x1);
-                                            necklineValue = y1 + slope * (Original_times[j] - x1);
-                                        }
-                                    } catch (...) {
-                                        // If any issues, fall back to simple neckline
-                                        Rcpp::Rcout << "[ERROR] Error calculating SHS neckline, using simple average" << std::endl;
-                                        necklineValue = simpleNeckline;
-                                    }
-                                    
-                                    // Breakout check - price drops below neckline
-                                    if (Original_prices[j] < necklineValue) {
-                                        // Confirm breakout: next price also below right shoulder (conservative)
-                                        if (j+1 < Original_prices.size() && 
-                                            Original_prices[j+1] < pattern.priceStamps[5]) {
-                                            
-                                            Rcpp::Rcout << "[DEBUG-CRASH] SHS Breakout detected using safe method" << std::endl;
-                                            
-                                            // Store breakout information
-                                            foundBreakout = true;
-                                            pattern.breakoutIdx = j + 1; // +1 for R indexing
-                                            
-                                            // Safely store breakout timestamp and price
-                                            if (j+1 < Original_times.size()) {
-                                                pattern.timeStamps[6] = Original_times[j+1];
-                                                pattern.priceStamps[6] = Original_prices[j+1];
-                                            } else {
-                                                pattern.timeStamps[6] = NA_INTEGER;
-                                                pattern.priceStamps[6] = NA_REAL;
-                                            }
-                                            
-                                            // Skip trend and returns calculation for now
-                                            // Just initialize with NA/default values
-                                            pattern.trendBeginPrice = NA_REAL;
-                                            pattern.trendBeginTime = NA_INTEGER;
-                                            pattern.trendEndPrice = NA_REAL;
-                                            pattern.trendEndTime = NA_INTEGER;
-                                            
-                                            // Initialize returns with NA values (will be populated by later logic)
-                                            std::fill(pattern.returns.begin(), pattern.returns.end(), NA_REAL);
-                                            std::fill(pattern.relReturns.begin(), pattern.relReturns.end(), NA_REAL);
-                                            
-                                            break; // Exit breakout search
-                                        }
-                                    }
-                                } 
-                                else if (pattern.patternName == "iSHS") {
-                                    Rcpp::Rcout << "[DEBUG-CRASH] Using failsafe iSHS detection code" << std::endl;
-                                    
-                                    // Invalidation check: if price drops below right shoulder, pattern is invalid
-                                    if (Original_prices[j] < pattern.priceStamps[5] && 
-                                        j != PrePro_indexFilter[i+5]) {
-                                        Rcpp::Rcout << "[DEBUG] iSHS pattern invalidated - price dropped below right shoulder" << std::endl;
-                                        break;
-                                    }
-                                    
-                                    // Calculate neckline value using direct array access (with bounds checks)
-                                    double necklineValue = 0.0;
-                                    
-                                    // Simple average of shoulder prices as a fallback
-                                    double simpleNeckline = (pattern.priceStamps[1] + pattern.priceStamps[5]) / 2.0;
-                                    
-                                    // Try to calculate the proper neckline if we have valid data
-                                    try {
-                                        int x1 = pattern.timeStamps[2];  // Peak1 time 
-                                        int x2 = pattern.timeStamps[4];  // Peak2 time
-                                        double y1 = pattern.priceStamps[2];  // Peak1 price
-                                        double y2 = pattern.priceStamps[4];  // Peak2 price
-                                        
-                                        // Linear interpolation to calculate neckline at current position
-                                        if (std::abs(x2 - x1) < 1e-15) {
-                                            // If x values are the same, just average the y values
-                                            necklineValue = (y1 + y2) / 2.0;
-                                        } else {
-                                            // Calculate slope and interpolate
-                                            double slope = (y2 - y1) / static_cast<double>(x2 - x1);
-                                            necklineValue = y1 + slope * (Original_times[j] - x1);
-                                        }
-                                    } catch (...) {
-                                        // If any issues, fall back to simple neckline
-                                        Rcpp::Rcout << "[ERROR] Error calculating iSHS neckline, using simple average" << std::endl;
-                                        necklineValue = simpleNeckline;
-                                    }
-                                    
-                                    // Breakout check - price rises above neckline
-                                    if (Original_prices[j] > necklineValue) {
-                                        // Confirm breakout: next price also above right shoulder (conservative)
-                                        if (j+1 < Original_prices.size() && 
-                                            Original_prices[j+1] > pattern.priceStamps[5]) {
-                                            
-                                            Rcpp::Rcout << "[DEBUG-CRASH] iSHS Breakout detected using safe method" << std::endl;
-                                            
-                                            // Store breakout information
-                                            foundBreakout = true;
-                                            pattern.breakoutIdx = j + 1; // +1 for R indexing
-                                            
-                                            // Safely store breakout timestamp and price
-                                            if (j+1 < Original_times.size()) {
-                                pattern.timeStamps[6] = Original_times[j+1];
-                                pattern.priceStamps[6] = Original_prices[j+1];
-                                            } else {
-                                                pattern.timeStamps[6] = NA_INTEGER;
-                                                pattern.priceStamps[6] = NA_REAL;
-                                            }
-                                            
-                                            // Skip trend and returns calculation for now
-                                            // Just initialize with NA/default values
-                                            pattern.trendBeginPrice = NA_REAL;
-                                            pattern.trendBeginTime = NA_INTEGER;
-                                            pattern.trendEndPrice = NA_REAL;
-                                            pattern.trendEndTime = NA_INTEGER;
-                                            
-                                            // Initialize returns with NA values (will be populated by later logic)
-                                            std::fill(pattern.returns.begin(), pattern.returns.end(), NA_REAL);
-                                            std::fill(pattern.relReturns.begin(), pattern.relReturns.end(), NA_REAL);
-                                            
-                                            break; // Exit breakout search
-                                        }
-                                    }
-                                }
-                                else {
-                                    // For any other pattern types, just use a safe default approach
-                                    Rcpp::Rcout << "[DEBUG-CRASH] Unknown pattern type: " << pattern.patternName << std::endl;
-                                    break;
-                                }
-                                
-                            } catch (const std::exception& e) {
-                                Rcpp::Rcout << "[ERROR-CRASH] Exception in breakout detection: " << e.what() << std::endl;
-                                continue; // Try next position
-                            } catch (...) {
-                                Rcpp::Rcout << "[ERROR-CRASH] Unknown exception in breakout detection" << std::endl;
-                                continue;
-                            }
-                        }
-                        
-                        // --- Populate output vectors with pattern details ---
-                        // Directly store pattern data in output vectors without the redundant patterns vector
-                        // These vectors will be used to create the R data frames for return values
-                        
-                        try {
-                            Rcpp::Rcout << "[DEBUG-VERBOSE] Storing pattern data in output vectors" << std::endl;
-                            
-                            // Ensure the pattern's arrays are properly sized before accessing them
-                            if (pattern.timeStamps.size() < 7 || pattern.priceStamps.size() < 7) {
-                                Rcpp::Rcout << "[ERROR] Pattern arrays are not properly sized. Resizing to 7 elements." << std::endl;
-                                pattern.timeStamps.resize(7, NA_INTEGER);
-                                pattern.priceStamps.resize(7, NA_REAL);
-                            }
-                            
-                            // Ensure the pattern's return arrays are properly sized
-                            if (pattern.returns.size() < 6) {
-                                Rcpp::Rcout << "[ERROR] Returns array is not properly sized. Resizing to 6 elements." << std::endl;
-                                pattern.returns.resize(6, NA_REAL);
-                            }
-                            
-                            if (pattern.relReturns.size() < 5) {
-                                Rcpp::Rcout << "[ERROR] Relative returns array is not properly sized. Resizing to 5 elements." << std::endl;
-                                pattern.relReturns.resize(5, NA_REAL);
-                            }
-                        
-                        // Store pattern identification information
-                        patternNames.push_back(pattern.patternName);  // Type of pattern ("SHS" or "iSHS")
-                        validPatterns.push_back(foundBreakout);       // Whether a breakout was found
-                        
-                        // Store pattern position information (adding 1 for R's 1-based indexing)
-                        firstIndexPrePro.push_back(pattern.startIdx + 1);  // Index in pivot point series
-                        firstIndexOriginal.push_back(PrePro_indexFilter[pattern.startIdx] + 1);  // Index in original series
-                        breakoutIndices.push_back(pattern.breakoutIdx);    // Breakout index (already R-indexed)
-                        
-                        // --- Store timestamps for each key point in the pattern ---
-                        // For SHS: 0=First point, 1=Left shoulder, 2=Trough1, 3=Head, 4=Trough2, 5=Right shoulder
-                        // For iSHS: 0=First point, 1=Left shoulder, 2=Peak1, 3=Head, 4=Peak2, 5=Right shoulder
-                        timeStamp0.push_back(pattern.timeStamps[0]);  // First point timestamp
-                        timeStamp1.push_back(pattern.timeStamps[1]);  // Left shoulder timestamp
-                        timeStamp2.push_back(pattern.timeStamps[2]);  // First peak/trough timestamp
-                        timeStamp3.push_back(pattern.timeStamps[3]);  // Head timestamp
-                        timeStamp4.push_back(pattern.timeStamps[4]);  // Second peak/trough timestamp
-                        timeStamp5.push_back(pattern.timeStamps[5]);  // Right shoulder timestamp
-                        
-                        // --- Store prices for each key point in the pattern ---
-                        // These price values correspond to the timestamps above
-                        priceStamp0.push_back(pattern.priceStamps[0]);  // First point price
-                        priceStamp1.push_back(pattern.priceStamps[1]);  // Left shoulder price
-                        priceStamp2.push_back(pattern.priceStamps[2]);  // First peak/trough price
-                        priceStamp3.push_back(pattern.priceStamps[3]);  // Head price
-                        priceStamp4.push_back(pattern.priceStamps[4]);  // Second peak/trough price
-                        priceStamp5.push_back(pattern.priceStamps[5]);  // Right shoulder price
-                        
-                        // --- Store surrounding trend information ---
-                        // These values capture the trend context before and after the pattern
-                        trendBeginPrices.push_back(pattern.trendBeginPrice);  // Price at start of preceding trend
-                        trendBeginTimes.push_back(pattern.trendBeginTime);    // Time at start of preceding trend
-                        trendEndPrices.push_back(pattern.trendEndPrice);      // Price at end of following trend
-                        trendEndTimes.push_back(pattern.trendEndTime);        // Time at end of following trend
-                        
-                        // --- Handle breakout-dependent data storage ---
-                        if (foundBreakout) {
-                            // --- Store breakout point details ---
-                            // If a valid breakout was found, store the actual timestamp and price at breakout
-                            timeStampBreakout.push_back(pattern.timeStamps[6]);   // Breakout timestamp (7th point)
-                            priceStampBreakout.push_back(pattern.priceStamps[6]); // Breakout price (7th point)
-                            
-                            // --- Store fixed-window return values ---
-                            // Returns at specific periods after breakout (1,3,5,10,30,60)
-                            returns1.push_back(pattern.returns[0]);   // Return after 1 period
-                            returns3.push_back(pattern.returns[1]);   // Return after 3 periods
-                            returns5.push_back(pattern.returns[2]);   // Return after 5 periods
-                            returns10.push_back(pattern.returns[3]);  // Return after 10 periods
-                            returns30.push_back(pattern.returns[4]);  // Return after 30 periods
-                            returns60.push_back(pattern.returns[5]);  // Return after 60 periods
-                            
-                            // --- Store relative-window return values ---
-                            // Returns at specific multiples of pattern length
-                            relReturns13.push_back(pattern.relReturns[0]);  // Return after 1/3 of pattern length
-                            relReturns12.push_back(pattern.relReturns[1]);  // Return after 1/2 of pattern length
-                            relReturns1.push_back(pattern.relReturns[2]);   // Return after 1x pattern length
-                            relReturns2.push_back(pattern.relReturns[3]);   // Return after 2x pattern length
-                            relReturns4.push_back(pattern.relReturns[4]);   // Return after 4x pattern length
-                        } else {
-                            // --- Handle patterns without breakout ---
-                            // For patterns without a breakout, we still need to maintain consistent
-                            // vector sizes by adding NA values as placeholders
-                            
-                            // Add NA for breakout data
-                            timeStampBreakout.push_back(NA_INTEGER);  // No breakout timestamp (missing value)
-                            priceStampBreakout.push_back(NA_REAL);    // No breakout price (missing value)
-                            
-                            // Add NA for all fixed-window returns
-                            returns1.push_back(NA_REAL);   // No 1-period return
-                            returns3.push_back(NA_REAL);   // No 3-period return
-                            returns5.push_back(NA_REAL);   // No 5-period return
-                            returns10.push_back(NA_REAL);  // No 10-period return
-                            returns30.push_back(NA_REAL);  // No 30-period return
-                            returns60.push_back(NA_REAL);  // No 60-period return
-                            
-                            // Add NA for all relative-window returns
-                            relReturns13.push_back(NA_REAL);  // No 1/3-length return
-                            relReturns12.push_back(NA_REAL);  // No 1/2-length return
-                            relReturns1.push_back(NA_REAL);   // No 1x-length return
-                            relReturns2.push_back(NA_REAL);   // No 2x-length return
-                            relReturns4.push_back(NA_REAL);   // No 4x-length return
-                            }
-                        } catch (const std::exception& e) {
-                            Rcpp::Rcout << "[ERROR] Exception while storing pattern data: " << e.what() << std::endl;
-                            // Skip this pattern and continue with the next one
+                        if (isInvalidated) {
+                            // Pattern invalidated - mark as processed and continue
+                            pattern.processed = true;
                             continue;
                         }
                         
-                        // --- Advance the pattern search position ---
-                        // Skip indices that have already been analyzed as part of this pattern
-                        // Each pattern uses 6 points, so we can safely skip ahead by 5 positions
-                        // (skipping 5 moves us to position i+5, the last point of the current pattern)
-                        i = i + 5;
-                        
-                        // Exit the detector loop since we found a pattern
-                        // This prevents checking other detectors at the same position
-                        break;
+                        // Check for breakout if pattern is still valid and breakout not detected yet
+                        if (pattern.breakoutIdx == NA_INTEGER) {
+                            // CRITICAL CHANGE: Instead of just checking at the current pivot position,
+                            // we now check all original data points after the right shoulder
+                            // This matches the reference implementation's approach
+                            
+                            // First, get the original index position of the right shoulder
+                            int rightShoulderOrigPos = PrePro_indexFilter[pattern.rightShoulderIdx];
+                            
+                            // Start scanning from the bar after the right shoulder
+                            // until the current position in the original series
+                            for (int j = rightShoulderOrigPos + 1; 
+                                 j <= currentOriginalPos && j < Original_prices.size() - 1; 
+                                 ++j) {
+                                
+                                // First check if the pattern is invalidated at this raw data position
+                                if (detector->isPatternInvalidated(Original_prices, Original_times, j, pattern)) {
+                                    pattern.processed = true;
+                                    break;  // Pattern invalidated, stop processing
+                                }
+                                
+                                // Check for breakout at this raw data position
+                                bool breakoutDetected = detector->detectBreakout(
+                                    Original_prices, Original_times, j, pattern);
+                                    
+                                if (breakoutDetected) {
+                                    // Calculate returns incrementally
+                                    detector->updateReturns(Original_prices, Original_times, j, pattern);
+                                    break;  // Breakout found, stop scanning
+                                }
+                            }
+                        } else if (!pattern.processed) {
+                            // If breakout already found but pattern not fully processed yet,
+                            // continue updating returns
+                            bool returnsComplete = detector->updateReturns(
+                                Original_prices, Original_times, currentOriginalPos, pattern);
+                                
+                            // Mark as processed when all returns are calculated
+                            if (returnsComplete) {
+                                pattern.processed = true;
+                            }
+                        }
+                    } catch (std::exception& e) {
+                        Rcpp::Rcout << "Error during pattern validation: " << e.what() << std::endl;
+                        pattern.processed = true; // Mark as processed to avoid further errors
+                    } catch (...) {
+                        Rcpp::Rcout << "Unknown error during pattern validation" << std::endl;
+                        pattern.processed = true; // Mark as processed to avoid further errors
+                    }
                 }
             }
         }
         
-        Rcpp::Rcout << "[DEBUG] Detection complete. Found " << patternNames.size() 
-                    << " patterns. Creating return structures." << std::endl;
+        // Apply final trend information to any patterns that still need it
+        // This handles the case where the dataset ends without a trend reset
+        trendTracker.applyFinalTrendInfo(potentialPatterns);
         
-        try {
-            // --- Create main pattern information data frame ---
-            // This contains the basic pattern metadata and trend information
-            // All vectors must have the same length (number of detected patterns)
-            Rcpp::DataFrame patternInfo = Rcpp::DataFrame::create(
-                // Pattern identification
-                Rcpp::Named("PatternName") = patternNames,         // Type of pattern (SHS or iSHS)
-                Rcpp::Named("validPattern") = validPatterns,       // Whether pattern had a breakout (true/false)
-                
-                // Pattern position indices
-                Rcpp::Named("firstIndexinPrePro") = firstIndexPrePro,          // Start index in preprocessed data
-                Rcpp::Named("firstIndexinOriginal") = firstIndexOriginal,      // Start index in original data
-                Rcpp::Named("breakoutIndexinOrig") = breakoutIndices,          // Breakout index in original data
-                
-                // Trend context information
-                Rcpp::Named("TrendBeginnPreis") = trendBeginPrices,  // Price at beginning of preceding trend
-                Rcpp::Named("TrendBeginnZeit") = trendBeginTimes,    // Time at beginning of preceding trend
-                Rcpp::Named("TrendEndePreis") = trendEndPrices,      // Price at end of following trend
-                Rcpp::Named("TrendEndeZeit") = trendEndTimes         // Time at end of following trend
-            );
+        // -----------------------------------------------------------------
+        // ---- Process results ----
+        // -----------------------------------------------------------------
+        
+        // Store pattern data in output vectors
+        for (const auto& patternPtr : potentialPatterns) {
+            const auto& pattern = *patternPtr;
             
-            // --- Create pattern feature points data frame ---
-            // This contains timestamps and prices for all key points in each pattern
-            // Used for visualization and detailed analysis of pattern structure
-            Rcpp::DataFrame Features2 = Rcpp::DataFrame::create(
-                // Timestamps for all key pattern points
-                Rcpp::Named("timeStamp0") = timeStamp0,              // First point timestamp
-                Rcpp::Named("timeStamp1") = timeStamp1,              // Left shoulder timestamp
-                Rcpp::Named("timeStamp2") = timeStamp2,              // First peak/trough timestamp
-                Rcpp::Named("timeStamp3") = timeStamp3,              // Head timestamp
-                Rcpp::Named("timeStamp4") = timeStamp4,              // Second peak/trough timestamp
-                Rcpp::Named("timeStamp5") = timeStamp5,              // Right shoulder timestamp
-                Rcpp::Named("timeStampBreakOut") = timeStampBreakout,// Breakout point timestamp
-                
-                // Prices for all key pattern points
-                Rcpp::Named("priceStamp0") = priceStamp0,            // First point price
-                Rcpp::Named("priceStamp1") = priceStamp1,            // Left shoulder price
-                Rcpp::Named("priceStamp2") = priceStamp2,            // First peak/trough price
-                Rcpp::Named("priceStamp3") = priceStamp3,            // Head price
-                Rcpp::Named("priceStamp4") = priceStamp4,            // Second peak/trough price
-                Rcpp::Named("priceStamp5") = priceStamp5,            // Right shoulder price
-                Rcpp::Named("priceStampBreakOut") = priceStampBreakout // Breakout point price
-            );
+            // Determine if pattern is valid (has a breakout)
+            bool isValid = (pattern.breakoutIdx != NA_INTEGER);
             
-            // --- Create pattern performance metrics data frame ---
-            // This contains all return data for analyzing pattern profitability
-            Rcpp::DataFrame Features21to41 = Rcpp::DataFrame::create(
-                // Fixed time window returns (periods after breakout)
-                Rcpp::Named("Rendite1V") = returns1,       // Return 1 period after breakout
-                Rcpp::Named("Rendite3V") = returns3,       // Return 3 periods after breakout
-                Rcpp::Named("Rendite5V") = returns5,       // Return 5 periods after breakout
-                Rcpp::Named("Rendite10V") = returns10,     // Return 10 periods after breakout
-                Rcpp::Named("Rendite30V") = returns30,     // Return 30 periods after breakout
-                Rcpp::Named("Rendite60V") = returns60,     // Return 60 periods after breakout
-                
-                // Relative time window returns (multiples of pattern length)
-                Rcpp::Named("relRendite13V") = relReturns13, // Return after 1/3 of pattern length
-                Rcpp::Named("relRendite12V") = relReturns12, // Return after 1/2 of pattern length
-                Rcpp::Named("relRendite1V") = relReturns1,   // Return after 1x pattern length
-                Rcpp::Named("relRendite2V") = relReturns2,   // Return after 2x pattern length
-                Rcpp::Named("relRendite4V") = relReturns4    // Return after 4x pattern length
-            );
+            // Store pattern identification
+            patternNames.push_back(pattern.patternName);
+            validPatterns.push_back(isValid);
             
-                // Store results
-            resultList = Rcpp::List::create(
-                Rcpp::Named("patternInfo") = patternInfo,     // Basic pattern information and trend context
-                Rcpp::Named("Features2") = Features2,         // Pattern point timestamps and prices
-                Rcpp::Named("Features21to40") = Features21to41 // Pattern performance metrics (returns)
-            );
+            // Store pattern position
+            firstIndexPrePro.push_back(pattern.startIdx + 1); // +1 for R indexing
             
-            Rcpp::Rcout << "[DEBUG] All data frames created successfully." << std::endl;
-        } catch (const std::exception& e) {
-            Rcpp::Rcout << "[DEBUG] Exception during result preparation: " << e.what() << std::endl;
-                returnEmptyResults = true;
-        } catch (...) {
-            Rcpp::Rcout << "[DEBUG] Unknown exception during result preparation" << std::endl;
-                returnEmptyResults = true;
+            if (pattern.startIdx < 0 || pattern.startIdx >= PrePro_indexFilter.size()) {
+                firstIndexOriginal.push_back(NA_INTEGER); // Use NA if out of bounds
+            } else {
+                firstIndexOriginal.push_back(PrePro_indexFilter[pattern.startIdx] + 1); // +1 for R indexing
             }
             
-            // Check if we should return empty results after result preparation
-            if (returnEmptyResults) {
-                Rcpp::Rcout << "[DEBUG] Returning empty results due to result preparation errors" << std::endl;
-                return createEmptyResults();
-            }
+            breakoutIndices.push_back(pattern.breakoutIdx); // Already R-indexed
             
-    } catch (const std::exception& e) {
-        Rcpp::Rcout << "[DEBUG] Exception during main detection loop: " << e.what() << std::endl;
-            returnEmptyResults = true;
-    } catch (...) {
-        Rcpp::Rcout << "[DEBUG] Unknown exception during main detection loop" << std::endl;
-            returnEmptyResults = true;
+            // Store key points
+            timeStamp0.push_back(pattern.timeStamps[0]);
+            timeStamp1.push_back(pattern.timeStamps[1]);
+            timeStamp2.push_back(pattern.timeStamps[2]);
+            timeStamp3.push_back(pattern.timeStamps[3]);
+            timeStamp4.push_back(pattern.timeStamps[4]);
+            timeStamp5.push_back(pattern.timeStamps[5]);
+            
+            priceStamp0.push_back(pattern.priceStamps[0]);
+            priceStamp1.push_back(pattern.priceStamps[1]);
+            priceStamp2.push_back(pattern.priceStamps[2]);
+            priceStamp3.push_back(pattern.priceStamps[3]);
+            priceStamp4.push_back(pattern.priceStamps[4]);
+            priceStamp5.push_back(pattern.priceStamps[5]);
+            
+            // Store trend information
+            priorTrendStartPrices.push_back(pattern.priorTrendStartPrice);
+            priorTrendStartTimes.push_back(pattern.priorTrendStartTime);
+            priorTrendPointsCounts.push_back(pattern.priorTrendPointsCount);
+            followingTrendStartPrices.push_back(pattern.followingTrendStartPrice);
+            followingTrendStartTimes.push_back(pattern.followingTrendStartTime);
+            followingTrendPointsCounts.push_back(pattern.followingTrendPointsCount);
+            
+            // Store breakout and return data
+            if (isValid) {
+                if (pattern.timeStamps.size() <= 6 || pattern.priceStamps.size() <= 6) {
+                    // Use NA values as fallback
+                    timeStampBreakout.push_back(NA_INTEGER);
+                    priceStampBreakout.push_back(NA_REAL);
+                } else {
+                    // Pattern is valid - store actual values
+                    timeStampBreakout.push_back(pattern.timeStamps[6]);
+                    priceStampBreakout.push_back(pattern.priceStamps[6]);
+                }
+                
+                if (pattern.returns.size() < 6 || pattern.relReturns.size() < 5) {
+                    // Use NA values as fallback for all returns
+                    returns1.push_back(NA_REAL);
+                    returns3.push_back(NA_REAL);
+                    returns5.push_back(NA_REAL);
+                    returns10.push_back(NA_REAL);
+                    returns30.push_back(NA_REAL);
+                    returns60.push_back(NA_REAL);
+                    
+                    relReturns13.push_back(NA_REAL);
+                    relReturns12.push_back(NA_REAL);
+                    relReturns1.push_back(NA_REAL);
+                    relReturns2.push_back(NA_REAL);
+                    relReturns4.push_back(NA_REAL);
+                } else {
+                    // Store returns
+                    returns1.push_back(pattern.returns[0]);
+                    returns3.push_back(pattern.returns[1]);
+                    returns5.push_back(pattern.returns[2]);
+                    returns10.push_back(pattern.returns[3]);
+                    returns30.push_back(pattern.returns[4]);
+                    returns60.push_back(pattern.returns[5]);
+                    
+                    relReturns13.push_back(pattern.relReturns[0]);
+                    relReturns12.push_back(pattern.relReturns[1]);
+                    relReturns1.push_back(pattern.relReturns[2]);
+                    relReturns2.push_back(pattern.relReturns[3]);
+                    relReturns4.push_back(pattern.relReturns[4]);
+                }
+            } else {
+                // Pattern is invalid - store NA values
+                timeStampBreakout.push_back(NA_INTEGER);
+                priceStampBreakout.push_back(NA_REAL);
+                
+                returns1.push_back(NA_REAL);
+                returns3.push_back(NA_REAL);
+                returns5.push_back(NA_REAL);
+                returns10.push_back(NA_REAL);
+                returns30.push_back(NA_REAL);
+                returns60.push_back(NA_REAL);
+                
+                relReturns13.push_back(NA_REAL);
+                relReturns12.push_back(NA_REAL);
+                relReturns1.push_back(NA_REAL);
+                relReturns2.push_back(NA_REAL);
+                relReturns4.push_back(NA_REAL);
+            }
         }
         
-        // Check if we should return empty results after the main detection loop
-        if (returnEmptyResults) {
-            Rcpp::Rcout << "[DEBUG] Returning empty results due to main detection loop errors" << std::endl;
+        Rcpp::Rcout << "Detection complete. Found " << patternNames.size() << " patterns." << std::endl;
+        
+        // Make sure we have at least one pattern before creating DataFrames
+        size_t patternInfoSize = patternNames.size();
+        if (patternInfoSize == 0) {
+            Rcpp::Rcout << "No patterns detected. Returning empty results." << std::endl;
             return createEmptyResults();
-    }
-    
-    // If we reach here, we have valid results to return
-    Rcpp::Rcout << "[DEBUG] Returning results with " << patternNames.size() << " patterns" << std::endl;
-    return resultList;
+        }
+        
+        // Ensure all vectors have consistent sizes to prevent "Error: vector"
+        auto ensureVectorSize = [patternInfoSize](auto& vec, const std::string& name, auto padValue) {
+            if (vec.size() < patternInfoSize) {
+                vec.resize(patternInfoSize, padValue);
+            } else if (vec.size() > patternInfoSize) {
+                vec.resize(patternInfoSize);
+            }
+        };
+
+        // Fix any vector size mismatches
+        ensureVectorSize(validPatterns, "validPatterns", false);
+        ensureVectorSize(firstIndexPrePro, "firstIndexPrePro", NA_INTEGER);
+        ensureVectorSize(firstIndexOriginal, "firstIndexOriginal", NA_INTEGER);
+        ensureVectorSize(breakoutIndices, "breakoutIndices", NA_INTEGER);
+        ensureVectorSize(priorTrendStartPrices, "priorTrendStartPrices", NA_REAL);
+        ensureVectorSize(priorTrendStartTimes, "priorTrendStartTimes", NA_INTEGER);
+        ensureVectorSize(priorTrendPointsCounts, "priorTrendPointsCounts", 0);
+        ensureVectorSize(followingTrendStartPrices, "followingTrendStartPrices", NA_REAL);
+        ensureVectorSize(followingTrendStartTimes, "followingTrendStartTimes", NA_INTEGER);
+        ensureVectorSize(followingTrendPointsCounts, "followingTrendPointsCounts", 0);
+
+        ensureVectorSize(timeStamp0, "timeStamp0", NA_INTEGER);
+        ensureVectorSize(timeStamp1, "timeStamp1", NA_INTEGER);
+        ensureVectorSize(timeStamp2, "timeStamp2", NA_INTEGER);
+        ensureVectorSize(timeStamp3, "timeStamp3", NA_INTEGER);
+        ensureVectorSize(timeStamp4, "timeStamp4", NA_INTEGER);
+        ensureVectorSize(timeStamp5, "timeStamp5", NA_INTEGER);
+        ensureVectorSize(timeStampBreakout, "timeStampBreakout", NA_INTEGER);
+        ensureVectorSize(priceStamp0, "priceStamp0", NA_REAL);
+        ensureVectorSize(priceStamp1, "priceStamp1", NA_REAL);
+        ensureVectorSize(priceStamp2, "priceStamp2", NA_REAL);
+        ensureVectorSize(priceStamp3, "priceStamp3", NA_REAL);
+        ensureVectorSize(priceStamp4, "priceStamp4", NA_REAL);
+        ensureVectorSize(priceStamp5, "priceStamp5", NA_REAL);
+        ensureVectorSize(priceStampBreakout, "priceStampBreakout", NA_REAL);
+
+        ensureVectorSize(returns1, "returns1", NA_REAL);
+        ensureVectorSize(returns3, "returns3", NA_REAL);
+        ensureVectorSize(returns5, "returns5", NA_REAL);
+        ensureVectorSize(returns10, "returns10", NA_REAL);
+        ensureVectorSize(returns30, "returns30", NA_REAL);
+        ensureVectorSize(returns60, "returns60", NA_REAL);
+        ensureVectorSize(relReturns13, "relReturns13", NA_REAL);
+        ensureVectorSize(relReturns12, "relReturns12", NA_REAL);
+        ensureVectorSize(relReturns1, "relReturns1", NA_REAL);
+        ensureVectorSize(relReturns2, "relReturns2", NA_REAL);
+        ensureVectorSize(relReturns4, "relReturns4", NA_REAL);
+        
+        // --- Create main pattern information data frame ---
+        // This contains the basic pattern metadata and trend information
+        // All vectors must have the same length (number of detected patterns)
+        Rcpp::DataFrame patternInfo = Rcpp::DataFrame::create(
+            // Pattern identification
+            Rcpp::Named("PatternName") = patternNames,         // Type of pattern (SHS or iSHS)
+            Rcpp::Named("validPattern") = validPatterns,       // Whether pattern had a breakout (true/false)
+            
+            // Pattern position indices
+            Rcpp::Named("firstIndexinPrePro") = firstIndexPrePro,          // Start index in preprocessed data
+            Rcpp::Named("firstIndexinOriginal") = firstIndexOriginal,      // Start index in original data
+            Rcpp::Named("breakoutIndexinOrig") = breakoutIndices,          // Breakout index in original data
+            
+            // Trend context information
+            Rcpp::Named("TrendBeginnPreis") = priorTrendStartPrices,  // Price at beginning of preceding trend
+            Rcpp::Named("TrendBeginnZeit") = priorTrendStartTimes,    // Time at beginning of preceding trend
+            Rcpp::Named("TrendPointsCount") = priorTrendPointsCounts,  // Count of trend points
+            Rcpp::Named("TrendBeginnPreisFollowing") = followingTrendStartPrices,  // Price at beginning of following trend
+            Rcpp::Named("TrendBeginnZeitFollowing") = followingTrendStartTimes,    // Time at beginning of following trend
+            Rcpp::Named("TrendPointsCountFollowing") = followingTrendPointsCounts  // Count of trend points
+        );
+
+        
+        // --- Create pattern feature points data frame ---
+        // This contains timestamps and prices for all key points in each pattern
+        // Used for visualization and detailed analysis of pattern structure
+        Rcpp::DataFrame Features2 = Rcpp::DataFrame::create(
+            // Timestamps for all key pattern points
+            Rcpp::Named("timeStamp0") = timeStamp0,              // First point timestamp
+            Rcpp::Named("timeStamp1") = timeStamp1,              // Left shoulder timestamp
+            Rcpp::Named("timeStamp2") = timeStamp2,              // First peak/trough timestamp
+            Rcpp::Named("timeStamp3") = timeStamp3,              // Head timestamp
+            Rcpp::Named("timeStamp4") = timeStamp4,              // Second peak/trough timestamp
+            Rcpp::Named("timeStamp5") = timeStamp5,              // Right shoulder timestamp
+            Rcpp::Named("timeStampBreakOut") = timeStampBreakout,// Breakout point timestamp
+            
+            // Prices for all key pattern points
+            Rcpp::Named("priceStamp0") = priceStamp0,            // First point price
+            Rcpp::Named("priceStamp1") = priceStamp1,            // Left shoulder price
+            Rcpp::Named("priceStamp2") = priceStamp2,            // First peak/trough price
+            Rcpp::Named("priceStamp3") = priceStamp3,            // Head price
+            Rcpp::Named("priceStamp4") = priceStamp4,            // Second peak/trough price
+            Rcpp::Named("priceStamp5") = priceStamp5,            // Right shoulder price
+            Rcpp::Named("priceStampBreakOut") = priceStampBreakout // Breakout point price
+        );
+        
+        // --- Create pattern performance metrics data frame ---
+        // This contains all return data for analyzing pattern profitability
+        Rcpp::DataFrame Features21to41 = Rcpp::DataFrame::create(
+            // Fixed time window returns (periods after breakout)
+            Rcpp::Named("Rendite1V") = returns1,       // Return 1 period after breakout
+            Rcpp::Named("Rendite3V") = returns3,       // Return 3 periods after breakout
+            Rcpp::Named("Rendite5V") = returns5,       // Return 5 periods after breakout
+            Rcpp::Named("Rendite10V") = returns10,     // Return 10 periods after breakout
+            Rcpp::Named("Rendite30V") = returns30,     // Return 30 periods after breakout
+            Rcpp::Named("Rendite60V") = returns60,     // Return 60 periods after breakout
+            
+            // Relative time window returns (multiples of pattern length)
+            Rcpp::Named("relRendite13V") = relReturns13, // Return after 1/3 of pattern length
+            Rcpp::Named("relRendite12V") = relReturns12, // Return after 1/2 of pattern length
+            Rcpp::Named("relRendite1V") = relReturns1,   // Return after 1x pattern length
+            Rcpp::Named("relRendite2V") = relReturns2,   // Return after 2x pattern length
+            Rcpp::Named("relRendite4V") = relReturns4    // Return after 4x pattern length
+        );
+        
+        // Store results
+        Rcpp::List resultList = Rcpp::List::create(
+            Rcpp::Named("patternInfo") = patternInfo,     // Basic pattern information and trend context
+            Rcpp::Named("Features2") = Features2,         // Pattern point timestamps and prices
+            Rcpp::Named("Features21to40") = Features21to41 // Pattern performance metrics (returns)
+        );
+        
+        // Return the final results
+        return resultList;
+        
     } catch (const std::exception& e) {
-        Rcpp::Rcout << "[DEBUG] Exception during main try block: " << e.what() << std::endl;
-        returnEmptyResults = true;
+        Rcpp::Rcout << "Error: " << e.what() << std::endl;
+        return createEmptyResults();
     } catch (...) {
-        Rcpp::Rcout << "[DEBUG] Unknown exception during main try block" << std::endl;
-        returnEmptyResults = true;
+        Rcpp::Rcout << "Unknown error" << std::endl;
+        return createEmptyResults();
     }
-    
-    // If we get here, there was an error somewhere, return empty results
-    return createEmptyResults();
 } 

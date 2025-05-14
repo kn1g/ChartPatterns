@@ -15,6 +15,9 @@
  *
  * This implementation handles edge cases safely, particularly avoiding division by zero
  * which can occur when x1 == x2.
+ * 
+ * NOTE: This function is also defined in PatternDetector.hpp for internal use,
+ * but the implementation here is required for R package exports.
  */
 
 /**
@@ -52,24 +55,26 @@ double calculateSlope(double x1, double x2, double y1, double y2) {
 }
 
 //' @name safeLinearInterpolation
- //' @title Safe Linear Interpolation
- //' @description Two-dimensional linear interpolation for a specific point with division-by-zero protection
- //' @param x1 First x coordinate
- //' @param x2 Second x coordinate
- //' @param y1 First y coordinate corresponding to x1
- //' @param y2 Second y coordinate corresponding to x2
- //' @param atPosition The point at which to calculate the interpolated value
- //' @return Returns the linear interpolated y-value for the specific point
- //' @examples
- //' safeLinearInterpolation(1, 2, 10, 20, 1.5) # Returns 15
- //'
- //' @export
- // [[Rcpp::export]]
- double safeLinearInterpolation(double x1, double x2, double y1, double y2, double atPosition) {
-   if (std::fabs(x2 - x1) < 1e-15) {
-     return (y1 + y2) / 2.0;
-   }
-   
-   double slope = (y2 - y1) / (x2 - x1);
-   return y1 + slope * (atPosition - x1);
- }
+//' @title Safe Linear Interpolation
+//' @description Two-dimensional linear interpolation for a specific point with division-by-zero protection
+//' @param x1 First x coordinate
+//' @param x2 Second x coordinate
+//' @param y1 First y coordinate corresponding to x1
+//' @param y2 Second y coordinate corresponding to x2
+//' @param atPosition The point at which to calculate the interpolated value
+//' @return Returns the linear interpolated y-value for the specific point
+//' @examples
+//' safeLinearInterpolation(1, 2, 10, 20, 1.5) # Returns 15
+//'
+//' @export
+// [[Rcpp::export]]
+double safeLinearInterpolation(double x1, double x2, double y1, double y2, double atPosition) {
+  // NOTE: This implementation is required for R package exports
+  // It duplicates the inline function in PatternDetector.hpp
+  if (std::fabs(x2 - x1) < 1e-15) {
+    return (y1 + y2) / 2.0;
+  }
+  
+  double slope = (y2 - y1) / (x2 - x1);
+  return y1 + slope * (atPosition - x1);
+}

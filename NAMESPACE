@@ -1,3 +1,4 @@
 useDynLib(ChartPatterns, .registration=TRUE)
 importFrom(Rcpp, evalCpp)
 exportPattern("^[[:alpha:]]+")
+export(UltraFastFind)
